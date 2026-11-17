@@ -14,6 +14,12 @@ enum class WikiLanguage(
         get() = "$baseUrl/api.php"
 }
 
+enum class InfoDocumentType {
+    ABOUT,
+    PRIVACY,
+    DISCLAIMER
+}
+
 data class WikiRelatedArticle(
     val title: String,
     val description: String? = null,
@@ -52,7 +58,9 @@ data class SportsSeasonStatCard(
 data class CareerCell(
     val text: String,
     val targetTitle: String? = null,
-    val isRedlink: Boolean = false
+    val isRedlink: Boolean = false,
+    val colSpan: Int = 1,
+    val isHeaderCell: Boolean = false
 )
 
 data class CareerTableSection(

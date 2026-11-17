@@ -224,4 +224,60 @@ class MippediaParsersTest {
         assertFalse(imgJpg.isAudio)
         assertFalse(imgJpg.isVideo)
     }
+
+    @Test
+    fun `extractInfobox parses combat match table and colspan info rows cleanly`() {
+        val sampleFighterHtml = """
+            <table class="infobox">
+              <tbody>
+                <tr><th colspan="2" class="infobox-above">Aziz Calim</th></tr>
+                <tr><th colspan="2" class="infobox-header">Statistik pertandingan</th></tr>
+                <tr>
+                  <td colspan="2">
+                    <table>
+                      <tr><th>Hasil</th><th>Lawan</th><th>Ajang</th></tr>
+                      <tr><td>✓ Menang (2-0) 5 ronde (3 menit) Keputusan Mutlak (UD)</td><td><a href="/w/index.php?title=Ezmir_Danial&amp;redlink=1">Ezmir Danial</a></td><td>Byon Combat Showbiz Vol. 5 (28 Juni 2025) • Duel Internasional 61 kg</td></tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><th colspan="2" class="infobox-header">Informasi lainnya</th></tr>
+                <tr>
+                  <td colspan="2">
+                    <table>
+                      <tr><th>Pengikut Instagram</th><td>361 RB</td></tr>
+                      <tr><th colspan="2">Informasi sosial</th></tr>
+                      <tr><td colspan="2">Data akurat per 20 Oktober 2026 dari Instagram, YouTube, Facebook, TikTok.</td></tr>
+                    </table>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+        """.trimIndent()
+
+        val infobox = MippediaHtmlParsers.extractInfobox(sampleFighterHtml)
+        assertNotNull(infobox)
+        assertEquals(2, infobox!!.careerSections.size)
+
+        val matches = infobox.careerSections[0]
+        assertEquals("Statistik pertandingan", matches.title)
+        assertEquals(listOf("Hasil", "Lawan", "Ajang"), matches.headers)
+        assertEquals(1, matches.rows.size)
+        assertEquals("Ezmir Danial", matches.rows[0][1].text)
+        assertEquals("Ezmir Danial", matches.rows[0][1].targetTitle)
+        assertTrue(matches.rows[0][1].isRedlink)
+
+        val otherInfo = infobox.careerSections[1]
+        assertEquals("Informasi lainnya", otherInfo.title)
+        assertTrue(otherInfo.headers.isEmpty())
+        assertEquals(3, otherInfo.rows.size)
+        assertEquals(2, otherInfo.rows[0].size)
+        assertEquals("Pengikut Instagram", otherInfo.rows[0][0].text)
+        assertEquals("361 RB", otherInfo.rows[0][1].text)
+        assertEquals(1, otherInfo.rows[1].size)
+        assertEquals(2, otherInfo.rows[1][0].colSpan)
+        assertTrue(otherInfo.rows[1][0].isHeaderCell)
+        assertEquals(1, otherInfo.rows[2].size)
+        assertEquals(2, otherInfo.rows[2][0].colSpan)
+        assertFalse(otherInfo.rows[2][0].isHeaderCell)
+    }
 }

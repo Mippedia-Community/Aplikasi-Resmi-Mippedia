@@ -4,7 +4,10 @@ import android.content.Context
 import android.util.Log
 import com.example.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.Cache
 import okhttp3.ConnectionPool
 import okhttp3.ConnectionSpec
 import okhttp3.FormBody
@@ -13,10 +16,12 @@ import okhttp3.Protocol
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.net.SocketException
 import java.net.URLEncoder
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import javax.net.ssl.SSLException
@@ -25,11 +30,28 @@ import javax.net.ssl.SSLHandshakeException
 class MippediaApiClient(context: Context) {
     private val cookieJar = PersistentCookieJar(context)
 
+    private data class CachedArticleEntry(
+        val article: WikiArticle,
+        val timestampMs: Long
+    )
+
+    private data class CachedRelatedEntry(
+        val items: List<WikiRelatedArticle>,
+        val timestampMs: Long
+    )
+
+    private val articleCache = ConcurrentHashMap<String, CachedArticleEntry>()
+    private val relatedCache = ConcurrentHashMap<String, CachedRelatedEntry>()
+    private val cacheTtlMs = 3 * 60 * 1000L
+
+    private val httpCache = Cache(File(context.cacheDir, "mippedia_http_cache"), 16L * 1024L * 1024L)
+
     private val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .writeTimeout(25, TimeUnit.SECONDS)
+        .cache(httpCache)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .protocols(listOf(Protocol.HTTP_1_1))
         .connectionSpecs(
@@ -38,7 +60,7 @@ class MippediaApiClient(context: Context) {
                 ConnectionSpec.COMPATIBLE_TLS
             )
         )
-        .connectionPool(ConnectionPool(5, 15, TimeUnit.SECONDS))
+        .connectionPool(ConnectionPool(8, 30, TimeUnit.SECONDS))
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36 MippediaApp/1.0 (contact: info@mippedia.org)")
@@ -52,8 +74,14 @@ class MippediaApiClient(context: Context) {
 
     fun clearHttpCache() {
         try {
+            articleCache.clear()
+            relatedCache.clear()
             client.cache?.evictAll()
         } catch (_: Exception) {}
+    }
+
+    fun invalidateArticleCache(title: String, lang: WikiLanguage) {
+        articleCache.remove("${lang.code}::${title.lowercase().trim()}")
     }
 
     suspend fun getRecentChanges(lang: WikiLanguage): Result<List<WikiRecentChange>> = withContext(Dispatchers.IO) {
@@ -184,54 +212,25 @@ class MippediaApiClient(context: Context) {
             val cleanQuery = query.trim()
             val encodedQuery = URLEncoder.encode(cleanQuery, "UTF-8")
 
-            val resultMap = mutableMapOf<String, WikiSearchResult>()
+            val resultMap = linkedMapOf<String, WikiSearchResult>()
 
-            // 1. Prefix search generator (great for 1, 2, 3+ characters like 'al', 'ka', etc.)
-            try {
-                val prefixUrl = "$targetEndpoint?action=query&generator=prefixsearch&gpssearch=$encodedQuery&gpslimit=15&prop=pageimages|extracts|info&pithumbsize=200&exintro=1&explaintext=1&exsentences=1&format=json"
-                val pJson = getJson(prefixUrl)
-                val pPages = pJson.optJSONObject("query")?.optJSONObject("pages")
-                if (pPages != null) {
-                    val keys = pPages.keys()
-                    while (keys.hasNext()) {
-                        val p = pPages.getJSONObject(keys.next())
-                        // Filter out redirect pages as requested
-                        if (p.has("redirect")) continue
-                        val t = p.optString("title", "")
-                        val thumb = p.optJSONObject("thumbnail")?.optString("source", null)
-                        val ext = p.optString("extract", "")
-                        resultMap[t.lowercase()] = WikiSearchResult(
-                            pageId = p.optLong("pageid", 0),
-                            title = t,
-                            snippet = ext,
-                            ns = p.optInt("ns", 0),
-                            thumbnailUrl = thumb,
-                            shortDescription = ext.take(120)
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("MippediaApiClient", "Prefix search warning: ${e.message}")
-            }
-
-            // 2. Full text generator search (matches inside text for 3+ letters)
-            if (cleanQuery.length >= 3) {
-                try {
-                    val genUrl = "$targetEndpoint?action=query&generator=search&gsrsearch=$encodedQuery*&gsrnamespace=$nsParam&gsrlimit=15&prop=pageimages|extracts|info&pithumbsize=200&exintro=1&explaintext=1&exsentences=2&format=json"
-                    val genJson = getJson(genUrl)
-                    val pages = genJson.optJSONObject("query")?.optJSONObject("pages")
-                    if (pages != null) {
-                        val keys = pages.keys()
-                        while (keys.hasNext()) {
-                            val p = pages.getJSONObject(keys.next())
-                            // Filter out redirect pages as requested
-                            if (p.has("redirect")) continue
-                            val t = p.optString("title", "")
-                            val k = t.lowercase()
-                            if (!resultMap.containsKey(k)) {
+            // Run prefixsearch and full-text search concurrently for maximum search speed!
+            coroutineScope {
+                val prefixDeferred = async {
+                    val temp = linkedMapOf<String, WikiSearchResult>()
+                    try {
+                        val prefixUrl = "$targetEndpoint?action=query&generator=prefixsearch&gpssearch=$encodedQuery&gpslimit=15&prop=pageimages|extracts|info&pithumbsize=200&exintro=1&explaintext=1&exsentences=1&format=json"
+                        val pJson = getJson(prefixUrl, maxRetries = 2)
+                        val pPages = pJson.optJSONObject("query")?.optJSONObject("pages")
+                        if (pPages != null) {
+                            val keys = pPages.keys()
+                            while (keys.hasNext()) {
+                                val p = pPages.getJSONObject(keys.next())
+                                if (p.has("redirect")) continue
+                                val t = p.optString("title", "")
                                 val thumb = p.optJSONObject("thumbnail")?.optString("source", null)
                                 val ext = p.optString("extract", "")
-                                resultMap[k] = WikiSearchResult(
+                                temp[t.lowercase()] = WikiSearchResult(
                                     pageId = p.optLong("pageid", 0),
                                     title = t,
                                     snippet = ext,
@@ -241,9 +240,49 @@ class MippediaApiClient(context: Context) {
                                 )
                             }
                         }
+                    } catch (e: Exception) {
+                        Log.w("MippediaApiClient", "Prefix search warning: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w("MippediaApiClient", "Full text search warning: ${e.message}")
+                    temp
+                }
+
+                val fullTextDeferred = async {
+                    val temp = linkedMapOf<String, WikiSearchResult>()
+                    if (cleanQuery.length >= 2) {
+                        try {
+                            val genUrl = "$targetEndpoint?action=query&generator=search&gsrsearch=$encodedQuery*&gsrnamespace=$nsParam&gsrlimit=15&prop=pageimages|extracts|info&pithumbsize=200&exintro=1&explaintext=1&exsentences=2&format=json"
+                            val genJson = getJson(genUrl, maxRetries = 2)
+                            val pages = genJson.optJSONObject("query")?.optJSONObject("pages")
+                            if (pages != null) {
+                                val keys = pages.keys()
+                                while (keys.hasNext()) {
+                                    val p = pages.getJSONObject(keys.next())
+                                    if (p.has("redirect")) continue
+                                    val t = p.optString("title", "")
+                                    val thumb = p.optJSONObject("thumbnail")?.optString("source", null)
+                                    val ext = p.optString("extract", "")
+                                    temp[t.lowercase()] = WikiSearchResult(
+                                        pageId = p.optLong("pageid", 0),
+                                        title = t,
+                                        snippet = ext,
+                                        ns = p.optInt("ns", 0),
+                                        thumbnailUrl = thumb,
+                                        shortDescription = ext.take(120)
+                                    )
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("MippediaApiClient", "Full text search warning: ${e.message}")
+                        }
+                    }
+                    temp
+                }
+
+                resultMap.putAll(prefixDeferred.await())
+                fullTextDeferred.await().forEach { (k, v) ->
+                    if (!resultMap.containsKey(k)) {
+                        resultMap[k] = v
+                    }
                 }
             }
 
@@ -289,11 +328,45 @@ class MippediaApiClient(context: Context) {
         }
     }
 
-    suspend fun getArticle(title: String, lang: WikiLanguage): Result<WikiArticle> = withContext(Dispatchers.IO) {
+    suspend fun getArticle(title: String, lang: WikiLanguage, bypassCache: Boolean = false): Result<WikiArticle> = withContext(Dispatchers.IO) {
         try {
+            val cacheKey = "${lang.code}::${title.lowercase().trim()}"
+            if (!bypassCache) {
+                val cached = articleCache[cacheKey]
+                if (cached != null && (System.currentTimeMillis() - cached.timestampMs) < cacheTtlMs) {
+                    return@withContext Result.success(cached.article)
+                }
+            }
+
             val encodedTitle = URLEncoder.encode(title, "UTF-8")
-            val parseUrl = "${lang.apiEndpoint}?action=parse&page=$encodedTitle&prop=text|sections|tocdata|displaytitle|categories|images|revid&redirects=1&format=json"
-            val parseJson = getJson(parseUrl)
+            val isCategoryPage = title.startsWith("Kategori:", ignoreCase = true) || title.startsWith("Category:", ignoreCase = true)
+
+            // Execute parse, revision/protection info, and optional category members CONCURRENTLY!
+            val (parseJson, revJson, catMembersList) = coroutineScope {
+                val parseDeferred = async {
+                    val parseUrl = "${lang.apiEndpoint}?action=parse&page=$encodedTitle&prop=text|sections|tocdata|displaytitle|categories|images|revid&redirects=1&format=json"
+                    getJson(parseUrl, maxRetries = 2)
+                }
+                val revDeferred = async {
+                    try {
+                        val revUrl = "${lang.apiEndpoint}?action=query&prop=revisions|info&rvslots=main&rvprop=content|timestamp|user&inprop=protection&redirects=1&titles=$encodedTitle&format=json"
+                        getJson(revUrl, maxRetries = 2)
+                    } catch (e: Exception) {
+                        Log.w("MippediaApiClient", "Wikitext/info fetch warning: ${e.message}")
+                        null
+                    }
+                }
+                val catDeferred = async {
+                    if (isCategoryPage) {
+                        try {
+                            getCategoryMembers(title, lang).getOrDefault(emptyList())
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+                    } else emptyList()
+                }
+                Triple(parseDeferred.await(), revDeferred.await(), catDeferred.await())
+            }
 
             if (parseJson.has("error")) {
                 val errorMsg = parseJson.getJSONObject("error").optString("info", "Halaman tidak ditemukan")
@@ -309,7 +382,7 @@ class MippediaApiClient(context: Context) {
 
             // Extract redirect source if MediaWiki followed a redirect
             val redirectsArr = parseObj.optJSONArray("redirects")
-            var redirectedFrom: String? = if (redirectsArr != null && redirectsArr.length() > 0) {
+            val redirectedFrom: String? = if (redirectsArr != null && redirectsArr.length() > 0) {
                 redirectsArr.getJSONObject(0).optString("from", null)
             } else if (resolvedTitle.equals(title, ignoreCase = false).not()) {
                 title
@@ -389,59 +462,36 @@ class MippediaApiClient(context: Context) {
                 }
             }
 
-            // Fetch wikitext for {{SHORTDESC:...}} and protection
+            // Extract wikitext, last editor, last modified, AND protection status from the single parallel revJson call!
             var shortDesc: String? = null
             var rawWikitext = ""
             var lastUser = ""
             var lastTime = ""
-            try {
-                val revUrl = "${lang.apiEndpoint}?action=query&prop=revisions|info&rvslots=main&rvprop=content|timestamp|user&inprop=protection&titles=$encodedTitle&format=json"
-                val revJson = getJson(revUrl)
-                val pagesNode = revJson.optJSONObject("query")?.optJSONObject("pages")
-                if (pagesNode != null) {
-                    val keys = pagesNode.keys()
-                    if (keys.hasNext()) {
-                        val pNode = pagesNode.getJSONObject(keys.next())
-                        val revArr = pNode.optJSONArray("revisions")
-                        if (revArr != null && revArr.length() > 0) {
-                            val revObj = revArr.getJSONObject(0)
-                            lastUser = revObj.optString("user", "")
-                            lastTime = revObj.optString("timestamp", "")
-                            rawWikitext = revObj
-                                .optJSONObject("slots")
-                                ?.optJSONObject("main")
-                                ?.optString("*", "") ?: ""
-
-                            val shortDescMatcher = Pattern.compile("(?i)\\{\\{\\s*(?:SHORTDESC|Short description)\\s*:\\s*([^}]+)\\s*\\}\\}").matcher(rawWikitext)
-                            if (shortDescMatcher.find()) {
-                                shortDesc = shortDescMatcher.group(1)?.trim()
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("MippediaApiClient", "Wikitext fetch error: ${e.message}")
-            }
-
-            // Fallback shortDesc from HTML
-            if (shortDesc.isNullOrBlank()) {
-                val htmlDescMatcher = Pattern.compile("<(?:div|span)[^>]*class=\"[^\"]*shortdescription[^\"]*\"[^>]*>(.*?)</(?:div|span)>", Pattern.DOTALL).matcher(rawHtml)
-                if (htmlDescMatcher.find()) {
-                    shortDesc = htmlDescMatcher.group(1)?.replace(Regex("<[^>]*>"), "")?.trim()
-                }
-            }
-
-            // Protection status
             var isProtected = false
             var protectionReason = ""
-            val infoUrl = "${lang.apiEndpoint}?action=query&prop=info&inprop=protection&titles=$encodedTitle&format=json"
-            val infoJson = getJson(infoUrl)
-            val pagesObj = infoJson.optJSONObject("query")?.optJSONObject("pages")
-            if (pagesObj != null) {
-                val keys = pagesObj.keys()
+
+            val pagesNode = revJson?.optJSONObject("query")?.optJSONObject("pages")
+            if (pagesNode != null) {
+                val keys = pagesNode.keys()
                 if (keys.hasNext()) {
-                    val pageNode = pagesObj.getJSONObject(keys.next())
-                    val protectionArray = pageNode.optJSONArray("protection")
+                    val pNode = pagesNode.getJSONObject(keys.next())
+                    val revArr = pNode.optJSONArray("revisions")
+                    if (revArr != null && revArr.length() > 0) {
+                        val revObj = revArr.getJSONObject(0)
+                        lastUser = revObj.optString("user", "")
+                        lastTime = revObj.optString("timestamp", "")
+                        rawWikitext = revObj
+                            .optJSONObject("slots")
+                            ?.optJSONObject("main")
+                            ?.optString("*", "") ?: ""
+
+                        val shortDescMatcher = Pattern.compile("(?i)\\{\\{\\s*(?:SHORTDESC|Short description)\\s*:\\s*([^}]+)\\s*\\}\\}").matcher(rawWikitext)
+                        if (shortDescMatcher.find()) {
+                            shortDesc = shortDescMatcher.group(1)?.trim()
+                        }
+                    }
+
+                    val protectionArray = pNode.optJSONArray("protection")
                     if (protectionArray != null && protectionArray.length() > 0) {
                         for (p in 0 until protectionArray.length()) {
                             val prot = protectionArray.getJSONObject(p)
@@ -454,33 +504,30 @@ class MippediaApiClient(context: Context) {
                 }
             }
 
+            // Fallback shortDesc from HTML
+            if (shortDesc.isNullOrBlank()) {
+                val htmlDescMatcher = Pattern.compile("<(?:div|span)[^>]*class=\"[^\"]*shortdescription[^\"]*\"[^>]*>(.*?)</(?:div|span)>", Pattern.DOTALL).matcher(rawHtml)
+                if (htmlDescMatcher.find()) {
+                    shortDesc = htmlDescMatcher.group(1)?.replace(Regex("<[^>]*>"), "")?.trim()
+                }
+            }
+
             // Extract Infobox, Hero Image, and Social Media links
             val infobox = MippediaHtmlParsers.extractInfobox(rawHtml)
             val heroImage = infobox?.imageUrl ?: extractFirstImage(rawHtml)
             val socialLinks = extractSocialLinks(rawHtml)
 
-            // Fetch real-time synchronized Related Articles (wgRelatedArticles -> morelike -> links/backlinks)
-            val relatedList = getRelatedArticles(resolvedTitle, lang).getOrDefault(emptyList())
-
-            // Fetch category members if this is a Category page
-            val categoryMembersList = mutableListOf<WikiSearchResult>()
-            val isCategoryPage = title.startsWith("Kategori:", ignoreCase = true) || title.startsWith("Category:", ignoreCase = true)
-            if (isCategoryPage) {
-                try {
-                    val catMembersRes = getCategoryMembers(title, lang)
-                    if (catMembersRes.isSuccess) {
-                        categoryMembersList.addAll(catMembersRes.getOrDefault(emptyList()))
-                    }
-                } catch (e: Exception) {
-                    Log.w("MippediaApiClient", "Failed to fetch category members: ${e.message}")
-                }
-            }
+            // Grab cached related articles immediately if available (never block article display on network!)
+            val relCacheKey = "${lang.code}::${resolvedTitle.lowercase().trim()}"
+            val cachedRelated = relatedCache[relCacheKey]?.takeIf {
+                (System.currentTimeMillis() - it.timestampMs) < cacheTtlMs
+            }?.items ?: emptyList()
 
             // Fallback for wikitext redirects (#ALIHKAN / #REDIRECT) if API did not follow
             if (redirectedFrom == null && (rawWikitext.startsWith("#ALIHKAN", ignoreCase = true) || rawWikitext.startsWith("#REDIRECT", ignoreCase = true))) {
                 val target = rawWikitext.substringAfter("[[").substringBefore("]]").substringBefore("|").trim()
                 if (target.isNotBlank() && !target.equals(title, ignoreCase = true)) {
-                    val targetRes = getArticle(target, lang)
+                    val targetRes = getArticle(target, lang, bypassCache)
                     if (targetRes.isSuccess) {
                         val targetArt = targetRes.getOrNull()!!
                         return@withContext Result.success(targetArt.copy(redirectedFrom = title))
@@ -488,31 +535,34 @@ class MippediaApiClient(context: Context) {
                 }
             }
 
-            Result.success(
-                WikiArticle(
-                    title = resolvedTitle,
-                    displayTitle = displayTitle,
-                    shortDescription = shortDesc,
-                    heroImageUrl = heroImage,
-                    pageId = pageId,
-                    rawWikitext = rawWikitext,
-                    parsedHtml = rawHtml,
-                    isProtected = isProtected,
-                    protectionReason = protectionReason,
-                    sections = sectionsList,
-                    infobox = infobox,
-                    socialLinks = socialLinks,
-                    categories = categories,
-                    images = images,
-                    relatedArticles = relatedList,
-                    categoryMembers = categoryMembersList,
-                    revId = revId,
-                    lastModified = lastTime,
-                    lastEditor = lastUser,
-                    language = lang,
-                    redirectedFrom = redirectedFrom
-                )
+            val resultArticle = WikiArticle(
+                title = resolvedTitle,
+                displayTitle = displayTitle,
+                shortDescription = shortDesc,
+                heroImageUrl = heroImage,
+                pageId = pageId,
+                rawWikitext = rawWikitext,
+                parsedHtml = rawHtml,
+                isProtected = isProtected,
+                protectionReason = protectionReason,
+                sections = sectionsList,
+                infobox = infobox,
+                socialLinks = socialLinks,
+                categories = categories,
+                images = images,
+                relatedArticles = cachedRelated,
+                categoryMembers = catMembersList,
+                revId = revId,
+                lastModified = lastTime,
+                lastEditor = lastUser,
+                language = lang,
+                redirectedFrom = redirectedFrom
             )
+            val entry = CachedArticleEntry(resultArticle, System.currentTimeMillis())
+            articleCache[cacheKey] = entry
+            articleCache["${lang.code}::${resolvedTitle.lowercase().trim()}"] = entry
+
+            Result.success(resultArticle)
         } catch (e: Exception) {
             Log.e("MippediaApiClient", "getArticle error: ${e.message}", e)
             val fallback = getFallbackArticle(title, lang)
@@ -650,6 +700,7 @@ class MippediaApiClient(context: Context) {
                     return@withContext Result.failure(Exception(info))
                 }
                 val editResult = resJson.optJSONObject("edit")?.optString("result", "Success") ?: "Success"
+                invalidateArticleCache(title, lang)
                 Result.success(editResult)
             }
         } catch (e: Exception) {
@@ -660,6 +711,12 @@ class MippediaApiClient(context: Context) {
 
     suspend fun getRelatedArticles(title: String, lang: WikiLanguage): Result<List<WikiRelatedArticle>> = withContext(Dispatchers.IO) {
         try {
+            val cacheKey = "${lang.code}::${title.lowercase().trim()}"
+            val cached = relatedCache[cacheKey]
+            if (cached != null && (System.currentTimeMillis() - cached.timestampMs) < cacheTtlMs) {
+                return@withContext Result.success(cached.items)
+            }
+
             val candidateTitles = mutableListOf<String>()
 
             // 1. Primary: Read real-time RelatedArticles config from the live wiki page (wgRelatedArticles)
@@ -718,6 +775,7 @@ class MippediaApiClient(context: Context) {
             }
 
             if (candidateTitles.isEmpty()) {
+                relatedCache[cacheKey] = CachedRelatedEntry(emptyList(), System.currentTimeMillis())
                 return@withContext Result.success(emptyList())
             }
 
@@ -729,7 +787,7 @@ class MippediaApiClient(context: Context) {
             val descMap = mutableMapOf<String, String>()
 
             try {
-                val enrichJson = getJson(enrichUrl, maxRetries = 2)
+                val enrichJson = getJson(enrichUrl, maxRetries = 1)
                 val pages = enrichJson.optJSONObject("query")?.optJSONObject("pages")
                 if (pages != null) {
                     val keys = pages.keys()
@@ -756,6 +814,7 @@ class MippediaApiClient(context: Context) {
                     thumbnailUrl = thumbMap[key]
                 )
             }
+            relatedCache[cacheKey] = CachedRelatedEntry(enriched, System.currentTimeMillis())
             Result.success(enriched)
         } catch (e: Exception) {
             Result.failure(e)

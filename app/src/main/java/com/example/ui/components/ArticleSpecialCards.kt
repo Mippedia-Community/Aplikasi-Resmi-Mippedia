@@ -3,14 +3,22 @@ package com.example.ui.components
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.SportsSoccer
+import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -31,8 +40,149 @@ import com.example.model.CareerTableSection
 import com.example.model.SportsSeasonStatCard
 import com.example.model.WikiRelatedArticle
 import com.example.ui.theme.MippediaAmber
+import com.example.ui.theme.MippediaGreen
 import com.example.ui.theme.MippediaTealAccent
 import kotlinx.coroutines.delay
+
+@Composable
+fun SpecialTablesCollapsibleSection(
+    seasonStats: List<SportsSeasonStatCard>,
+    careerSections: List<CareerTableSection>,
+    articleKey: String,
+    onArticleLinkClick: (String) -> Unit,
+    onRedlinkClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (seasonStats.isEmpty() && careerSections.isEmpty()) return
+
+    // Hidden by default as requested; user chooses when to expand/collapse
+    var expanded by remember(articleKey) { mutableStateOf(false) }
+
+    val sectionTitles = buildList {
+        if (seasonStats.isNotEmpty()) add("Statistik Musim (${seasonStats.size})")
+        careerSections.forEach { add(it.title) }
+    }
+    val totalModules = (if (seasonStats.isNotEmpty()) 1 else 0) + careerSections.size
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Outlined.TableChart,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Tabel Khusus & Statistik",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "$totalModules bagian data tersedia",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                FilledTonalButton(
+                    onClick = { expanded = !expanded },
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .heightIn(min = 42.dp)
+                        .testTag("toggle_special_tables_button")
+                ) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (expanded) "Sembunyikan" else "Tampilkan",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (!expanded && sectionTitles.isNotEmpty()) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(sectionTitles) { label ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    if (seasonStats.isNotEmpty()) {
+                        SportsSeasonStatsDeck(seasonStats = seasonStats)
+                    }
+                    if (careerSections.isNotEmpty()) {
+                        CareerAndAchievementsDeck(
+                            sections = careerSections,
+                            onArticleLinkClick = onArticleLinkClick,
+                            onRedlinkClick = onRedlinkClick
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun SportsSeasonStatsDeck(
@@ -101,7 +251,6 @@ private fun SingleSeasonStatCard(stat: SportsSeasonStatCard) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Distinctive Gradient Athletic Header (different from web HTML!)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -140,7 +289,6 @@ private fun SingleSeasonStatCard(stat: SportsSeasonStatCard) {
                 }
             }
 
-            // 4 KPI Metric Pills
             if (stat.metrics.isNotEmpty()) {
                 Row(
                     modifier = Modifier
@@ -200,7 +348,6 @@ private fun SingleSeasonStatCard(stat: SportsSeasonStatCard) {
                 }
             }
 
-            // Detailed Stat Rows
             if (stat.details.isNotEmpty()) {
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
@@ -228,13 +375,16 @@ private fun SingleSeasonStatCard(stat: SportsSeasonStatCard) {
                             Text(
                                 text = key,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(0.55f)
                             )
                             Text(
                                 text = valStr,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(0.45f)
                             )
                         }
                     }
@@ -261,33 +411,45 @@ fun CareerAndAchievementsDeck(
             val lowerTitle = section.title.lowercase()
             val isAchievement = lowerTitle.contains("prestasi") || lowerTitle.contains("penghargaan") || lowerTitle.contains("gelar")
             val isEsports = lowerTitle.contains("profesional") || section.headers.any { it.contains("Turnamen", ignoreCase = true) }
+            val isMatchSection = lowerTitle.contains("pertandingan") || lowerTitle.contains("rekor bertarung") ||
+                section.headers.any { h -> h.equals("Hasil", ignoreCase = true) || h.equals("Lawan", ignoreCase = true) }
+            val isInfoSection = lowerTitle.contains("informasi") || lowerTitle.contains("media sosial")
+
+            val accentColor = when {
+                isAchievement -> Color(0xFFB45309)
+                isMatchSection -> Color(0xFF0369A1)
+                else -> MippediaTealAccent
+            }
+            val headerTint = when {
+                isAchievement -> MippediaAmber.copy(alpha = 0.14f)
+                isMatchSection -> Color(0xFF0284C7).copy(alpha = 0.12f)
+                else -> MippediaTealAccent.copy(alpha = 0.13f)
+            }
 
             Card(
                 shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    // Section Banner Header (distinct Material 3 Android style)
+                    // Section Banner Header
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                if (isAchievement) MippediaAmber.copy(alpha = 0.14f)
-                                else MippediaTealAccent.copy(alpha = 0.13f)
-                            )
+                            .background(headerTint)
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Surface(
                                 shape = CircleShape,
-                                color = if (isAchievement) MippediaAmber.copy(alpha = 0.25f) else MippediaTealAccent.copy(alpha = 0.22f),
+                                color = accentColor.copy(alpha = 0.18f),
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -295,10 +457,12 @@ fun CareerAndAchievementsDeck(
                                         imageVector = when {
                                             isAchievement -> Icons.Default.EmojiEvents
                                             isEsports -> Icons.Default.SportsEsports
+                                            isMatchSection -> Icons.Default.SportsMma
+                                            isInfoSection -> Icons.Default.Insights
                                             else -> Icons.Default.Timeline
                                         },
                                         contentDescription = null,
-                                        tint = if (isAchievement) Color(0xFFB45309) else MippediaTealAccent,
+                                        tint = accentColor,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -310,32 +474,330 @@ fun CareerAndAchievementsDeck(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        Text(
-                            text = "${section.rows.size} entri",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                        ) {
+                            Text(
+                                text = "${section.rows.size} entri",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
 
-                    // Body Rows
+                    // Body Rows routed intelligently by row cardinality & cell structure
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (isAchievement) {
-                            section.rows.forEach { row ->
-                                AchievementEntryCard(
-                                    row = row,
-                                    onArticleLinkClick = onArticleLinkClick,
-                                    onRedlinkClick = onRedlinkClick
-                                )
+                        section.rows.forEach { row ->
+                            val nonEmpty = row.filter { it.text.isNotBlank() }
+                            when {
+                                nonEmpty.isEmpty() -> Unit
+                                nonEmpty.size == 1 -> {
+                                    SingleSpanInfoRow(
+                                        cell = nonEmpty.first(),
+                                        onArticleLinkClick = onArticleLinkClick,
+                                        onRedlinkClick = onRedlinkClick
+                                    )
+                                }
+                                nonEmpty.size == 2 -> {
+                                    KeyValueCareerRow(
+                                        labelCell = nonEmpty[0],
+                                        valueCell = nonEmpty[1],
+                                        onArticleLinkClick = onArticleLinkClick,
+                                        onRedlinkClick = onRedlinkClick
+                                    )
+                                }
+                                isAchievement -> {
+                                    AchievementEntryCard(
+                                        row = nonEmpty,
+                                        onArticleLinkClick = onArticleLinkClick,
+                                        onRedlinkClick = onRedlinkClick
+                                    )
+                                }
+                                isMatchSection || shouldUseStackedCard(nonEmpty, section.headers) -> {
+                                    StructuredDetailEntryCard(
+                                        row = nonEmpty,
+                                        headers = section.headers,
+                                        onArticleLinkClick = onArticleLinkClick,
+                                        onRedlinkClick = onRedlinkClick
+                                    )
+                                }
+                                else -> {
+                                    CareerTimelineRow(
+                                        row = nonEmpty,
+                                        onArticleLinkClick = onArticleLinkClick,
+                                        onRedlinkClick = onRedlinkClick
+                                    )
+                                }
                             }
-                        } else {
-                            section.rows.forEach { row ->
-                                CareerTimelineRow(
-                                    row = row,
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun shouldUseStackedCard(row: List<CareerCell>, headers: List<String>): Boolean {
+    if (row.size > 3) return true
+    if (headers.any { h ->
+            val hl = h.lowercase()
+            hl.contains("hasil") || hl.contains("lawan") || hl.contains("ajang") || hl.contains("acara")
+        }
+    ) return true
+    val firstLen = row.getOrNull(0)?.text?.length ?: 0
+    val secondLen = row.getOrNull(1)?.text?.length ?: 0
+    val thirdLen = row.getOrNull(2)?.text?.length ?: 0
+    return firstLen > 14 || thirdLen > 20 || (firstLen > 10 && secondLen > 16)
+}
+
+@Composable
+private fun SingleSpanInfoRow(
+    cell: CareerCell,
+    onArticleLinkClick: (String) -> Unit,
+    onRedlinkClick: (String) -> Unit
+) {
+    val isShortSubheader = cell.isHeaderCell || (cell.text.length <= 36 && !cell.text.contains("data akurat", ignoreCase = true) && !cell.text.endsWith("."))
+    if (isShortSubheader) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp, bottom = 2.dp, start = 4.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(16.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+            ClickableCellText(
+                cell = cell,
+                fontWeight = FontWeight.Bold,
+                onArticleLinkClick = onArticleLinkClick,
+                onRedlinkClick = onRedlinkClick
+            )
+        }
+    } else {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(15.dp)
+                )
+                ClickableCellText(
+                    cell = cell,
+                    fontWeight = FontWeight.Normal,
+                    onArticleLinkClick = onArticleLinkClick,
+                    onRedlinkClick = onRedlinkClick,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeyValueCareerRow(
+    labelCell: CareerCell,
+    valueCell: CareerCell,
+    onArticleLinkClick: (String) -> Unit,
+    onRedlinkClick: (String) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ClickableCellText(
+                cell = labelCell,
+                fontWeight = FontWeight.Medium,
+                customColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                onArticleLinkClick = onArticleLinkClick,
+                onRedlinkClick = onRedlinkClick,
+                modifier = Modifier.weight(0.48f)
+            )
+            ClickableCellText(
+                cell = valueCell,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.End,
+                onArticleLinkClick = onArticleLinkClick,
+                onRedlinkClick = onRedlinkClick,
+                modifier = Modifier.weight(0.52f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StructuredDetailEntryCard(
+    row: List<CareerCell>,
+    headers: List<String>,
+    onArticleLinkClick: (String) -> Unit,
+    onRedlinkClick: (String) -> Unit
+) {
+    val firstCell = row.getOrNull(0)
+    val secondCell = row.getOrNull(1)
+    val thirdCell = row.getOrNull(2)
+    val extraCells = if (row.size > 3) row.drop(3) else emptyList()
+
+    val firstLower = firstCell?.text?.lowercase().orEmpty()
+    val isWin = firstLower.contains("menang") || firstLower.contains("win") || firstLower.contains("✓")
+    val isLoss = firstLower.contains("kalah") || firstLower.contains("loss") || firstLower.contains("✗")
+    val badgeBg = when {
+        isWin -> MippediaGreen.copy(alpha = 0.14f)
+        isLoss -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+        else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+    }
+    val badgeFg = when {
+        isWin -> Color(0xFF15803D)
+        isLoss -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Top Status / Header Badge
+            if (firstCell != null && firstCell.text.isNotBlank()) {
+                val h0 = headers.getOrNull(0)?.takeIf { it.isNotBlank() }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = badgeBg,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (h0 != null) "$h0: ${firstCell.text}" else firstCell.text,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = badgeFg,
+                        lineHeight = 18.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Prominent Primary Subject (Lawan / Tim / Judul) — Full width so words never wrap letter-by-letter!
+            if (secondCell != null && secondCell.text.isNotBlank()) {
+                val h1 = headers.getOrNull(1)?.takeIf { it.isNotBlank() }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (h1 != null) {
+                        Text(
+                            text = h1.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.6.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    ClickableCellText(
+                        cell = secondCell,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15,
+                        onArticleLinkClick = onArticleLinkClick,
+                        onRedlinkClick = onRedlinkClick,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            // Event / Ajang / Detail Metadata
+            if (thirdCell != null && thirdCell.text.isNotBlank()) {
+                val h2 = headers.getOrNull(2)?.takeIf { it.isNotBlank() }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        if (h2 != null) {
+                            Text(
+                                text = h2,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        ClickableCellText(
+                            cell = thirdCell,
+                            fontWeight = FontWeight.Medium,
+                            onArticleLinkClick = onArticleLinkClick,
+                            onRedlinkClick = onRedlinkClick,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            // Any extra trailing columns beyond 3
+            if (extraCells.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    extraCells.forEachIndexed { extraIdx, extraCell ->
+                        val headerName = headers.getOrNull(extraIdx + 3)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                if (!headerName.isNullOrBlank()) {
+                                    Text(
+                                        text = headerName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                ClickableCellText(
+                                    cell = extraCell,
+                                    fontWeight = FontWeight.SemiBold,
                                     onArticleLinkClick = onArticleLinkClick,
                                     onRedlinkClick = onRedlinkClick
                                 )
@@ -360,7 +822,7 @@ private fun CareerTimelineRow(
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+        color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -370,12 +832,11 @@ private fun CareerTimelineRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Year Pill
             if (yearCell != null && yearCell.text.isNotBlank()) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                    modifier = Modifier.widthIn(min = 76.dp, max = 96.dp)
+                    modifier = Modifier.widthIn(min = 72.dp, max = 106.dp)
                 ) {
                     Text(
                         text = yearCell.text,
@@ -388,7 +849,6 @@ private fun CareerTimelineRow(
                 }
             }
 
-            // Team / Club Name (clickable if wiki link)
             if (teamCell != null) {
                 ClickableCellText(
                     cell = teamCell,
@@ -399,17 +859,18 @@ private fun CareerTimelineRow(
                 )
             }
 
-            // Appearances / Goals / Assists
             if (statCell != null && statCell.text.isNotBlank()) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surface
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.widthIn(max = 110.dp)
                 ) {
                     Text(
                         text = statCell.text,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.End,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
@@ -424,14 +885,13 @@ private fun AchievementEntryCard(
     onArticleLinkClick: (String) -> Unit,
     onRedlinkClick: (String) -> Unit
 ) {
-    // Prestasi / Prestasi utama has [Tim, Kompetisi/Turnamen, Tahun]
     val teamCell = row.getOrNull(0)
     val competitionCell = row.getOrNull(1)
     val yearCell = row.getOrNull(2)
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -459,14 +919,16 @@ private fun AchievementEntryCard(
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                        modifier = Modifier.let { base ->
-                            if (!teamCell.targetTitle.isNullOrBlank()) {
-                                base.clickable {
-                                    if (teamCell.isRedlink) onRedlinkClick(teamCell.targetTitle)
-                                    else onArticleLinkClick(teamCell.targetTitle)
-                                }
-                            } else base
-                        }
+                        modifier = Modifier
+                            .widthIn(max = 140.dp)
+                            .let { base ->
+                                if (!teamCell.targetTitle.isNullOrBlank()) {
+                                    base.clickable {
+                                        if (teamCell.isRedlink) onRedlinkClick(teamCell.targetTitle)
+                                        else onArticleLinkClick(teamCell.targetTitle)
+                                    }
+                                } else base
+                            }
                     ) {
                         Text(
                             text = teamCell.text,
@@ -508,20 +970,27 @@ private fun ClickableCellText(
     fontWeight: FontWeight,
     onArticleLinkClick: (String) -> Unit,
     onRedlinkClick: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fontSize: Int = 13,
+    textAlign: TextAlign = TextAlign.Start,
+    customColor: Color? = null
 ) {
     val target = cell.targetTitle
     val textColor = when {
-        target == null -> MaterialTheme.colorScheme.onSurface
-        cell.isRedlink -> Color(0xFFB91C1C)
-        else -> MaterialTheme.colorScheme.primary
+        target != null && cell.isRedlink -> Color(0xFFB91C1C)
+        target != null -> MaterialTheme.colorScheme.primary
+        customColor != null -> customColor
+        else -> MaterialTheme.colorScheme.onSurface
     }
     Text(
         text = cell.text,
         style = MaterialTheme.typography.bodySmall.copy(
+            fontSize = fontSize.sp,
             fontWeight = fontWeight,
-            textDecoration = if (target != null && !cell.isRedlink) TextDecoration.None else TextDecoration.None
+            lineHeight = (fontSize + 5).sp,
+            textDecoration = TextDecoration.None
         ),
+        textAlign = textAlign,
         color = textColor,
         modifier = modifier.let { base ->
             if (!target.isNullOrBlank()) {

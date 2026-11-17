@@ -8,6 +8,8 @@ import coil.Coil
 import com.example.model.*
 import com.example.repository.MippediaRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -29,8 +31,10 @@ data class UiState(
     val error: String? = null,
     val successNotice: String? = null,
 
-    // Onboarding
+    // Onboarding & Post-Auth Tutorial
     val showOnboarding: Boolean = false,
+    val onboardingSkipSplash: Boolean = false,
+    val showPostAuthTutorial: Boolean = false,
 
     // Home / Explore
     val recentChanges: List<WikiRecentChange> = emptyList(),
@@ -96,9 +100,8 @@ data class UiState(
     // Redlink / Missing Article Prompt
     val missingArticlePrompt: String? = null,
 
-    // Info Dialogs (Tentang, Kebijakan Privasi, Penyangkalan)
-    val infoModalTitle: String? = null,
-    val infoModalContent: String? = null,
+    // Full-screen Info Documents (Tentang, Kebijakan Privasi, Penyangkalan)
+    val activeInfoDocument: InfoDocumentType? = null,
 
     // Reader Preferences & Persisted Settings
     val readerFontSizeSp: Float = 16f,
@@ -155,7 +158,16 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
 
     fun completeOnboarding() {
         appPrefs.edit().putBoolean("onboarding_complete_v1", true).apply()
-        _uiState.update { it.copy(showOnboarding = false) }
+        _uiState.update { it.copy(showOnboarding = false, onboardingSkipSplash = false) }
+    }
+
+    fun openTutorial() {
+        _uiState.update { it.copy(showOnboarding = true, onboardingSkipSplash = true) }
+    }
+
+    fun completePostAuthTutorial() {
+        appPrefs.edit().putBoolean("post_auth_tutorial_seen", true).apply()
+        _uiState.update { it.copy(showPostAuthTutorial = false) }
     }
 
     fun selectTab(tab: AppTab) {
@@ -190,8 +202,11 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             val currentLang = _uiState.value.currentLanguage
-            val rcRes = repository.apiClient.getRecentChanges(currentLang)
-            val highlightsRes = repository.apiClient.getMainPageHighlights(currentLang)
+            val (rcRes, highlightsRes) = coroutineScope {
+                val rcDeferred = async { repository.apiClient.getRecentChanges(currentLang) }
+                val hlDeferred = async { repository.apiClient.getMainPageHighlights(currentLang) }
+                rcDeferred.await() to hlDeferred.await()
+            }
             val highlights = highlightsRes.getOrNull()
 
             _uiState.update {
@@ -245,14 +260,17 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
         }
 
         viewModelScope.launch {
+            val lang = _uiState.value.currentLanguage
             _uiState.update {
                 it.copy(
                     isLoading = true,
                     loadingMessage = "Memuat $cleanTitle...",
-                    error = null
+                    error = null,
+                    showRelatedSheet = false,
+                    showTocSheet = false
                 )
             }
-            val res = repository.apiClient.getArticle(cleanTitle, _uiState.value.currentLanguage)
+            val res = repository.apiClient.getArticle(cleanTitle, lang)
             if (res.isSuccess) {
                 val article = res.getOrNull()
                 val isSaved = article != null && (repository.isBookmarked(article.title) || repository.isBookmarked(cleanTitle))
@@ -263,6 +281,22 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
                         isLoading = false,
                         loadingMessage = ""
                     )
+                }
+                // Fetch synchronized Related Articles asynchronously so article body renders immediately
+                if (article != null && article.relatedArticles.isEmpty()) {
+                    launch {
+                        val relRes = repository.apiClient.getRelatedArticles(article.title, lang)
+                        val relList = relRes.getOrDefault(emptyList())
+                        if (relList.isNotEmpty()) {
+                            _uiState.update { cur ->
+                                if (cur.activeArticle?.title == article.title) {
+                                    cur.copy(activeArticle = cur.activeArticle.copy(relatedArticles = relList))
+                                } else {
+                                    cur
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 _uiState.update {
@@ -445,7 +479,7 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
             return
         }
         searchJob = viewModelScope.launch {
-            delay(300)
+            delay(140)
             executeSearch(query)
         }
     }
@@ -595,10 +629,12 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
             val res = repository.apiClient.login(user.trim(), pass, _uiState.value.currentLanguage)
             _uiState.update { it.copy(isActionLoading = false, loadingMessage = "") }
             if (res.isSuccess) {
+                val shouldShowPostAuth = !appPrefs.getBoolean("post_auth_tutorial_seen", false)
                 _uiState.update {
                     it.copy(
                         showLoginSheet = false,
                         failedLoginAttempts = 0,
+                        showPostAuthTutorial = shouldShowPostAuth,
                         successNotice = "Selamat datang kembali, ${res.getOrNull()}!"
                     )
                 }
@@ -626,9 +662,11 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
             val res = repository.apiClient.register(user.trim(), pass, email.trim(), _uiState.value.currentLanguage)
             _uiState.update { it.copy(isActionLoading = false, loadingMessage = "") }
             if (res.isSuccess) {
+                appPrefs.edit().putBoolean("post_auth_tutorial_seen", false).apply()
                 _uiState.update {
                     it.copy(
                         showRegisterSheet = false,
+                        showPostAuthTutorial = true,
                         successNotice = res.getOrNull()
                     )
                 }
@@ -776,12 +814,12 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
         repository.removeSavedArticle(title)
     }
 
-    fun showInfoModal(title: String, content: String) {
-        _uiState.update { it.copy(infoModalTitle = title, infoModalContent = content) }
+    fun openInfoDocument(type: InfoDocumentType) {
+        _uiState.update { it.copy(activeInfoDocument = type) }
     }
 
-    fun closeInfoModal() {
-        _uiState.update { it.copy(infoModalTitle = null, infoModalContent = null) }
+    fun closeInfoDocument() {
+        _uiState.update { it.copy(activeInfoDocument = null) }
     }
 
     // Settings & Reader Preferences Persistence

@@ -547,12 +547,17 @@ object MippediaHtmlParsers {
             while (rowMatcher.find()) {
                 val trHtml = rowMatcher.group(1) ?: continue
                 val cells = mutableListOf<CareerCell>()
-                val tdMatcher = Pattern.compile("<t[dh][^>]*>(.*?)</t[dh]>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE).matcher(trHtml)
+                val tdMatcher = Pattern.compile("<(t[dh])([^>]*)>(.*?)</\\1>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE).matcher(trHtml)
                 while (tdMatcher.find()) {
-                    val cellHtml = tdMatcher.group(1) ?: ""
+                    val tagType = (tdMatcher.group(1) ?: "td").lowercase()
+                    val attrs = tdMatcher.group(2) ?: ""
+                    val cellHtml = tdMatcher.group(3) ?: ""
                     val cellText = stripHtml(cellHtml)
                     var targetTitle: String? = null
                     var isRedlink = false
+
+                    val colspanMatch = Pattern.compile("colspan\\s*=\\s*[\"']?(\\d+)[\"']?", Pattern.CASE_INSENSITIVE).matcher(attrs)
+                    val colSpan = if (colspanMatch.find()) (colspanMatch.group(1)?.toIntOrNull() ?: 1) else 1
 
                     val aMatcher = Pattern.compile("<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>", Pattern.CASE_INSENSITIVE).matcher(cellHtml)
                     if (aMatcher.find()) {
@@ -560,19 +565,34 @@ object MippediaHtmlParsers {
                         targetTitle = t
                         isRedlink = red
                     }
-                    cells.add(CareerCell(text = cellText, targetTitle = targetTitle, isRedlink = isRedlink))
+                    cells.add(
+                        CareerCell(
+                            text = cellText,
+                            targetTitle = targetTitle,
+                            isRedlink = isRedlink,
+                            colSpan = colSpan,
+                            isHeaderCell = (tagType == "th")
+                        )
+                    )
                 }
 
                 if (cells.isEmpty()) continue
 
-                // Detect header row (font-weight:bold / contains Tahun/Tim/Kompetisi/Turnamen)
+                val allHeaderTags = cells.size >= 2 && cells.all { it.isHeaderCell }
+                val knownHeaderWords = setOf(
+                    "tahun", "tim", "klub", "kompetisi", "turnamen", "hasil", "lawan", "ajang",
+                    "rekor", "musim", "peran", "acara", "lokasi", "catatan", "metode", "ronde",
+                    "waktu", "negara", "peringkat", "posisi", "gelar", "statistik"
+                )
+                val matchesHeaderWords = cells.count { c ->
+                    val l = c.text.lowercase()
+                    l in knownHeaderWords || l.startsWith("tampil") || l.startsWith("penampilan")
+                } >= 2
+
                 val looksLikeHeader = isFirstRow && (
-                    trHtml.contains("font-weight:bold", ignoreCase = true) ||
-                    trHtml.contains("font-weight: bold", ignoreCase = true) ||
-                    cells.any { c ->
-                        val l = c.text.lowercase()
-                        l == "tahun" || l == "tim" || l == "kompetisi" || l == "turnamen" || l.startsWith("tampil")
-                    }
+                    allHeaderTags ||
+                    matchesHeaderWords ||
+                    (cells.size >= 2 && (trHtml.contains("font-weight:bold", ignoreCase = true) || trHtml.contains("font-weight: bold", ignoreCase = true)))
                 )
                 isFirstRow = false
 

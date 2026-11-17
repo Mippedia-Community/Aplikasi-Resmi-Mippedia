@@ -2,10 +2,16 @@ package com.example.ui.components
 
 import android.content.Intent
 import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +20,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -22,14 +29,20 @@ import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,41 +97,190 @@ fun ArticleRenderer(
     var showAnonEditDialog by remember { mutableStateOf(false) }
     var isHeroImageError by remember(article.heroImageUrl) { mutableStateOf(false) }
 
-    // Protection Information Dialog
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
+    // Always jump cleanly to top when switching to a different article (e.g., via Halaman Terkait or internal links)
+    LaunchedEffect(article.title) {
+        listState.scrollToItem(0)
+    }
+
+    val showScrollToTop by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 280
+        }
+    }
+
+    // Polished Protection Information Dialog
     if (showProtectionDialog) {
-        AlertDialog(
+        val levelLabel = when {
+            isCategory -> "Indeks Kategori Sistem"
+            article.protectionReason.isNotBlank() -> article.protectionReason
+            else -> "Dilindungi Pengurus (Sysop)"
+        }
+        Dialog(
             onDismissRequest = { showProtectionDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = MippediaAmber,
-                    modifier = Modifier.size(28.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = if (isCategory) "Halaman Kategori Dilindungi" else "Halaman Dilindungi",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium
-                )
-            },
-            text = {
-                Text(
-                    text = protectionDialogMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    lineHeight = 22.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { showProtectionDialog = false },
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Tutup")
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .widthIn(max = 460.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Gradient Security Header Banner
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(Color(0xFF92400E), Color(0xFFD97706))
+                                )
+                            )
+                            .padding(20.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(alpha = 0.2f),
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White.copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        text = levelLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if (isCategory) "Halaman Kategori Dilindungi" else "Halaman Dilindungi",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = article.displayTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.88f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MippediaAmber.copy(alpha = 0.1f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Shield,
+                                    contentDescription = null,
+                                    tint = Color(0xFFB45309),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        text = "Mengapa halaman ini dikunci?",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = protectionDialogMessage,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        lineHeight = 19.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Yang tetap dapat Anda lakukan:",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "• Membaca seluruh isi artikel, tabel, dan berkas media secara bebas.\n• Menyimpan halaman ke Bookmark atau membagikannya.\n• Menyunting artikel terbuka lainnya atau berdiskusi melalui situs web Mippedia.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 19.sp
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    showProtectionDialog = false
+                                    try {
+                                        val encoded = java.net.URLEncoder.encode(article.title, "UTF-8")
+                                        val url = "${article.language.baseUrl}/w/index.php?title=$encoded&action=info"
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    } catch (_: Exception) {}
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Info di Web")
+                            }
+                            Button(
+                                onClick = { showProtectionDialog = false },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("protection_dialog_close_button")
+                            ) {
+                                Text("Mengerti", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
-        )
+        }
     }
 
     // Anonymous Edit Confirmation Dialog (Requirement 6)
@@ -335,6 +497,7 @@ fun ArticleRenderer(
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
@@ -342,7 +505,7 @@ fun ArticleRenderer(
                 start = 16.dp,
                 end = 16.dp,
                 top = 16.dp,
-                bottom = if (activeAudioUrl != null) 110.dp else 16.dp
+                bottom = if (activeAudioUrl != null) 124.dp else 72.dp
             ),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -628,25 +791,22 @@ fun ArticleRenderer(
             }
         }
 
-        // 5. Native Infobox Card + Sports/Esports Stats & Career Cards
+        // 5. Native Infobox Card + Collapsible Sports/Career Special Tables (Hidden by default)
         if (article.infobox != null) {
             if (article.infobox.items.isNotEmpty() || article.infobox.title.isNotBlank()) {
-                item {
+                item(key = "infobox_${article.title}") {
                     InfoboxCard(
                         infobox = article.infobox,
                         onImageClick = onImageClick
                     )
                 }
             }
-            if (article.infobox.seasonStats.isNotEmpty()) {
-                item {
-                    SportsSeasonStatsDeck(seasonStats = article.infobox.seasonStats)
-                }
-            }
-            if (article.infobox.careerSections.isNotEmpty()) {
-                item {
-                    CareerAndAchievementsDeck(
-                        sections = article.infobox.careerSections,
+            if (article.infobox.seasonStats.isNotEmpty() || article.infobox.careerSections.isNotEmpty()) {
+                item(key = "special_tables_${article.title}") {
+                    SpecialTablesCollapsibleSection(
+                        seasonStats = article.infobox.seasonStats,
+                        careerSections = article.infobox.careerSections,
+                        articleKey = article.title,
                         onArticleLinkClick = onArticleLinkClick,
                         onRedlinkClick = onRedlinkClick
                     )
@@ -655,7 +815,7 @@ fun ArticleRenderer(
         }
 
         // 6. Complete Article Content via High-Fidelity Styled Renderer
-        item {
+        item(key = "article_html_${article.title}") {
             val styledHtml = remember(article.parsedHtml, isDark, fontSizeSp, useSerif, fontFamilyName) {
                 generateStyledArticleHtml(
                     rawHtml = article.parsedHtml,
@@ -675,9 +835,14 @@ fun ArticleRenderer(
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT
+                            )
                             setBackgroundColor(android.graphics.Color.TRANSPARENT)
                             settings.javaScriptEnabled = false
                             settings.domStorageEnabled = false
+                            settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
                             settings.loadWithOverviewMode = true
                             settings.useWideViewPort = false
                             webViewClient = object : WebViewClient() {
@@ -755,7 +920,11 @@ fun ArticleRenderer(
                         }
                     },
                     update = { webView ->
-                        webView.loadDataWithBaseURL("https://id.mippedia.org", styledHtml, "text/html", "UTF-8", null)
+                        val htmlHash = styledHtml.hashCode()
+                        if (webView.tag != htmlHash) {
+                            webView.tag = htmlHash
+                            webView.loadDataWithBaseURL(article.language.baseUrl, styledHtml, "text/html", "UTF-8", null)
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -958,6 +1127,50 @@ fun ArticleRenderer(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+    }
+
+    // Compact Floating "Ke Atas" Button when scrolled down
+    AnimatedVisibility(
+        visible = showScrollToTop,
+        enter = fadeIn() + scaleIn(),
+        exit = fadeOut() + scaleOut(),
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(
+                end = 16.dp,
+                bottom = if (activeAudioUrl != null) 114.dp else 16.dp
+            )
+    ) {
+        SmallFloatingActionButton(
+            onClick = {
+                coroutineScope.launch {
+                    listState.animateScrollToItem(0)
+                }
+            },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = Color.White,
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .testTag("scroll_to_top_button")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = "Kembali ke Atas",
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Ke Atas",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }

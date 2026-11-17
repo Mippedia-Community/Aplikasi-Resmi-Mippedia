@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.model.InfoDocumentType
 import com.example.model.WikiLanguage
 import com.example.model.WikiSearchResult
 import com.example.ui.*
@@ -78,13 +79,14 @@ fun MippediaMainApp(viewModel: MippediaViewModel = viewModel()) {
 
     val isSubScreenActive = uiState.showLoginSheet || uiState.showRegisterSheet || uiState.showForgotPasswordSheet ||
             uiState.showSettingsScreen || uiState.showUserProfileScreen || uiState.showSavedArticlesFromAccount ||
-            uiState.showEditor || (uiState.activeMedia != null)
+            uiState.showEditor || (uiState.activeMedia != null) || (uiState.activeInfoDocument != null)
 
     // Handle Back Press cleanly across all full-screen views
     BackHandler(
         enabled = isSubScreenActive || uiState.activeArticle != null || uiState.activeMedia != null || uiState.showEditor
     ) {
         when {
+            uiState.activeInfoDocument != null -> viewModel.closeInfoDocument()
             uiState.showEditor -> viewModel.closeEditor()
             uiState.showLoginSheet -> viewModel.showLogin(false)
             uiState.showRegisterSheet -> viewModel.showRegister(false)
@@ -233,7 +235,12 @@ fun MippediaMainApp(viewModel: MippediaViewModel = viewModel()) {
                 .padding(paddingValues)
         ) {
             // Main Content Area
-            if (uiState.showLoginSheet) {
+            if (uiState.activeInfoDocument != null) {
+                InfoDocumentScreen(
+                    documentType = uiState.activeInfoDocument!!,
+                    onBack = { viewModel.closeInfoDocument() }
+                )
+            } else if (uiState.showLoginSheet) {
                 LoginScreen(
                     isLoading = uiState.isActionLoading,
                     onLogin = { u, p -> viewModel.performLogin(u, p) },
@@ -418,27 +425,22 @@ fun MippediaMainApp(viewModel: MippediaViewModel = viewModel()) {
                             onSettingsClick = { viewModel.openSettings() },
                             onUserProfileClick = { username -> viewModel.openUserProfile(username) },
                             onLogoutClick = { viewModel.performLogout() },
-                            onAboutClick = {
-                                viewModel.showInfoModal(
-                                    title = "Tentang Mippedia",
-                                    content = "Mippedia adalah proyek ensiklopedia daring bebas dan multibahasa yang dikelola dan dikembangkan secara independen oleh Mippedia Community.\n\nSistem Mippedia terdiri dari:\n• Mippedia Indonesia: Edisi Bahasa Indonesia\n• Mippedia English: Edisi Bahasa Inggris\n• Mippedia Commons: Repositori berkas media dan gambar bersama untuk seluruh edisi bahasa.\n\nAplikasi Android ini menghadirkan pengalaman membaca dan berkontribusi yang bersih, cepat, terstruktur, dan modern."
-                                )
-                            },
-                            onPrivacyClick = {
-                                viewModel.showInfoModal(
-                                    title = "Kebijakan Privasi",
-                                    content = "Privasi Anda adalah prioritas kami di Mippedia.\n\n1. Pembacaan Bebas: Anda dapat membaca seluruh konten ensiklopedia tanpa memerlukan akun atau memberikan data pribadi.\n2. Akun Sementara & Anonim: Kontributor yang menyunting tanpa akun akan dicatat alamat IP publiknya untuk menjaga integritas artikel dan mencegah vandalisme.\n3. Akun Terdaftar: Kami hanya menyimpan nama pengguna dan kata sandi yang terenkripsi aman di peladen MediaWiki.\n4. Kuki: Aplikasi menggunakan kuki sesi yang disimpan secara lokal di perangkat Anda untuk menjaga status masuk Anda."
-                                )
-                            },
-                            onDisclaimerClick = {
-                                viewModel.showInfoModal(
-                                    title = "Penyangkalan Umum (Disclaimer)",
-                                    content = "Konten dalam Mippedia dibuat dan disunting secara kolaboratif oleh komunitas terbuka sukarelawan. Walaupun komunitas berupaya memastikan akurasi data, Mippedia tidak memberikan jaminan mutlak atas kebenaran, kelengkapan, atau kesesuaian informasi untuk tujuan hukum, medis, atau profesional tertentu.\n\nSegala bentuk penggunaan informasi merupakan tanggung jawab pribadi pembaca."
-                                )
-                            }
+                            onAboutClick = { viewModel.openInfoDocument(InfoDocumentType.ABOUT) },
+                            onPrivacyClick = { viewModel.openInfoDocument(InfoDocumentType.PRIVACY) },
+                            onDisclaimerClick = { viewModel.openInfoDocument(InfoDocumentType.DISCLAIMER) },
+                            onOpenTutorial = { viewModel.openTutorial() }
                         )
                     }
                 }
+            }
+
+            // Sleek Non-blocking Top Progress Bar when fetching articles or switching pages
+            if (uiState.isLoading && !isSubScreenActive && (uiState.activeArticle != null || uiState.currentTab != AppTab.EXPLORE)) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                )
             }
 
             // Success Notice Toast / Banner
@@ -573,17 +575,17 @@ fun MippediaMainApp(viewModel: MippediaViewModel = viewModel()) {
         )
     }
 
-    if (uiState.infoModalTitle != null && uiState.infoModalContent != null) {
-        InfoModalDialog(
-            title = uiState.infoModalTitle!!,
-            content = uiState.infoModalContent!!,
-            onClose = { viewModel.closeInfoModal() }
+    if (uiState.showOnboarding) {
+        OnboardingDialog(
+            skipSplash = uiState.onboardingSkipSplash,
+            onComplete = { viewModel.completeOnboarding() }
         )
     }
 
-    if (uiState.showOnboarding) {
-        OnboardingDialog(
-            onComplete = { viewModel.completeOnboarding() }
+    if (uiState.showPostAuthTutorial) {
+        PostAuthTutorialDialog(
+            username = uiState.currentUser.username.ifBlank { "Kontributor" },
+            onDismiss = { viewModel.completePostAuthTutorial() }
         )
     }
 }

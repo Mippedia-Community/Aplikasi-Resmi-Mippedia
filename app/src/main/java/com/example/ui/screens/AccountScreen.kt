@@ -52,6 +52,7 @@ fun AccountScreen(
     onAboutClick: () -> Unit,
     onPrivacyClick: () -> Unit,
     onDisclaimerClick: () -> Unit,
+    onOpenTutorial: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -326,6 +327,13 @@ fun AccountScreen(
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                 }
                 SettingsItem(
+                    icon = Icons.Outlined.HelpOutline,
+                    title = "Panduan & Tutorial Aplikasi",
+                    subtitle = "Pelajari cara mencari, membaca, menyunting & mengelola akun",
+                    onClick = onOpenTutorial
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                SettingsItem(
                     icon = Icons.Outlined.Info,
                     title = "Tentang Mippedia",
                     subtitle = "Tujuan, sejarah, dan ekosistem MediaWiki Mippedia",
@@ -364,7 +372,7 @@ fun AccountScreen(
                     .clip(CircleShape)
             )
             Text(
-                text = "Mippedia Android v1.3",
+                text = "Mippedia Android v1.7.2",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
