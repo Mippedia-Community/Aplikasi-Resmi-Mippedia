@@ -135,130 +135,42 @@ class MippediaApiClient(context: Context) {
         }
     }
 
-    suspend fun getMonthlyFeatures(lang: WikiLanguage): Result<Pair<MonthlyFeature?, MonthlyFeature?>> = withContext(Dispatchers.IO) {
-        if (lang != WikiLanguage.INDONESIAN) {
-            // English or Commons does not have monthly features on main page
-            return@withContext Result.success(Pair(null, null))
-        }
+    data class MainPageHighlights(
+        val monthlyArticle: MonthlyFeature? = null,
+        val monthlyImage: MonthlyFeature? = null,
+        val onThisDay: OnThisDayData? = null
+    )
 
+    suspend fun getMainPageHighlights(lang: WikiLanguage): Result<MainPageHighlights> = withContext(Dispatchers.IO) {
         try {
-            val url = "${lang.apiEndpoint}?action=parse&page=Halaman_Utama&prop=text&format=json"
+            val pageName = if (lang == WikiLanguage.ENGLISH) "Main_Page" else "Halaman_Utama"
+            val url = "${lang.apiEndpoint}?action=parse&page=$pageName&prop=text&format=json"
             val json = getJson(url)
             val html = json.optJSONObject("parse")?.optJSONObject("text")?.optString("*", "") ?: ""
 
-            var monthlyArticle: MonthlyFeature? = null
-            var monthlyImage: MonthlyFeature? = null
-
-            // 1. Extract ARTIKEL BULANAN
-            val abPattern = Pattern.compile("ARTIKEL BULANAN.*?</div>\\s*<div[^>]*>(.*?)</div>\\s*<div", Pattern.DOTALL)
-            val abMatcher = abPattern.matcher(html)
-            if (abMatcher.find()) {
-                val abContent = abMatcher.group(1) ?: ""
-
-                // Image
-                var abImg: String? = null
-                val imgMatcher = Pattern.compile("src=[\"']([^\"']+)[\"']").matcher(abContent)
-                if (imgMatcher.find()) {
-                    val rawSrc = imgMatcher.group(1) ?: ""
-                    abImg = when {
-                        rawSrc.startsWith("//") -> "https:$rawSrc"
-                        rawSrc.startsWith("/") -> "https://commons.mippedia.org$rawSrc"
-                        else -> rawSrc
-                    }
-                }
-
-                // Link & Title
-                var targetTitle = "Sistem penulisan"
-                val linkMatcher = Pattern.compile("<a[^>]*href=[\"']/wiki/([^\"']+)[\"'][^>]*>(.*?)</a>").matcher(abContent)
-                while (linkMatcher.find()) {
-                    val candidate = linkMatcher.group(1)?.replace('_', ' ') ?: ""
-                    if (!candidate.contains("Berkas:", ignoreCase = true) && !candidate.contains("File:", ignoreCase = true) && !candidate.contains("Special:", ignoreCase = true) && !candidate.contains("Istimewa:", ignoreCase = true)) {
-                        targetTitle = candidate
-                        break
-                    }
-                }
-
-                // Clean summary text
-                val cleanSummary = abContent
-                    .replace(Regex("<div[^>]*class=[\"']thumb[^\"']*[\"'].*?</div>", RegexOption.DOT_MATCHES_ALL), "")
-                    .replace(Regex("<div[^>]*style=[\"'][^\"']*border-top[^\"']*[\"'].*?</div>", RegexOption.DOT_MATCHES_ALL), "")
-                    .replace(Regex("<[^>]+>"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-
-                monthlyArticle = MonthlyFeature(
-                    title = targetTitle,
-                    summary = cleanSummary.take(280),
-                    imageUrl = abImg,
-                    targetArticleTitle = targetTitle
-                )
+            val (monthlyArticle, monthlyImage) = if (lang == WikiLanguage.INDONESIAN) {
+                MippediaHtmlParsers.parseMonthlyFeaturesFromMainPage(html)
+            } else {
+                MippediaHtmlParsers.parseMonthlyFeaturesFromMainPage(html)
             }
+            val onThisDay = MippediaHtmlParsers.parseOnThisDayFromMainPage(html)
 
-            // 2. Extract GAMBAR BULANAN
-            val gbPattern = Pattern.compile("GAMBAR BULANAN.*?</div>\\s*<div[^>]*>(.*?)</div>\\s*<div", Pattern.DOTALL)
-            val gbMatcher = gbPattern.matcher(html)
-            if (gbMatcher.find()) {
-                val gbContent = gbMatcher.group(1) ?: ""
-
-                var gbImg: String? = null
-                val imgMatcher = Pattern.compile("src=[\"']([^\"']+)[\"']").matcher(gbContent)
-                if (imgMatcher.find()) {
-                    val rawSrc = imgMatcher.group(1) ?: ""
-                    gbImg = when {
-                        rawSrc.startsWith("//") -> "https:$rawSrc"
-                        rawSrc.startsWith("/") -> "https://commons.mippedia.org$rawSrc"
-                        else -> rawSrc
-                    }
-                }
-
-                val cleanSummary = gbContent
-                    .replace(Regex("<div[^>]*style=[\"'][^\"']*border-top[^\"']*[\"'].*?</div>", RegexOption.DOT_MATCHES_ALL), "")
-                    .replace(Regex("<[^>]+>"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-
-                monthlyImage = MonthlyFeature(
-                    title = "Foto Pilihan Mippedia",
-                    summary = cleanSummary.take(250),
-                    imageUrl = gbImg,
-                    targetArticleTitle = "Berkas:Foto Seorang Tentara Jerman.jpeg"
+            Result.success(
+                MainPageHighlights(
+                    monthlyArticle = monthlyArticle,
+                    monthlyImage = monthlyImage,
+                    onThisDay = onThisDay
                 )
-            }
-
-            if (monthlyArticle == null) {
-                monthlyArticle = MonthlyFeature(
-                    title = "Sistem penulisan",
-                    summary = "Sistem penulisan adalah cara untuk mencatat bahasa secara visual menggunakan grafem atau tanda grafis tertentu.",
-                    imageUrl = "https://commons.mippedia.org/w/thumb.php?f=Foto_Seorang_Tentara_Jerman.jpeg&width=600",
-                    targetArticleTitle = "Sistem penulisan"
-                )
-            }
-            if (monthlyImage == null) {
-                monthlyImage = MonthlyFeature(
-                    title = "Foto Pilihan Mippedia",
-                    summary = "Potret dokumentasi sejarah Mippedia Commons.",
-                    imageUrl = "https://commons.mippedia.org/w/thumb.php?f=Foto_Seorang_Tentara_Jerman.jpeg&width=600",
-                    targetArticleTitle = "Berkas:Foto Seorang Tentara Jerman.jpeg"
-                )
-            }
-
-            Result.success(Pair(monthlyArticle, monthlyImage))
+            )
         } catch (e: Exception) {
-            Log.e("MippediaApiClient", "getMonthlyFeatures error", e)
-            val fallbackArt = MonthlyFeature(
-                title = "Sistem penulisan",
-                summary = "Sistem penulisan adalah cara untuk mencatat bahasa secara visual menggunakan grafem atau tanda grafis tertentu.",
-                imageUrl = "https://commons.mippedia.org/w/thumb.php?f=Foto_Seorang_Tentara_Jerman.jpeg&width=600",
-                targetArticleTitle = "Sistem penulisan"
-            )
-            val fallbackImg = MonthlyFeature(
-                title = "Foto Pilihan Mippedia",
-                summary = "Potret dokumentasi sejarah Mippedia Commons.",
-                imageUrl = "https://commons.mippedia.org/w/thumb.php?f=Foto_Seorang_Tentara_Jerman.jpeg&width=600",
-                targetArticleTitle = "Berkas:Foto Seorang Tentara Jerman.jpeg"
-            )
-            Result.success(Pair(fallbackArt, fallbackImg))
+            Log.e("MippediaApiClient", "getMainPageHighlights error", e)
+            Result.failure(e)
         }
+    }
+
+    suspend fun getMonthlyFeatures(lang: WikiLanguage): Result<Pair<MonthlyFeature?, MonthlyFeature?>> {
+        val res = getMainPageHighlights(lang)
+        return res.map { Pair(it.monthlyArticle, it.monthlyImage) }
     }
 
     suspend fun search(query: String, lang: WikiLanguage, filter: SearchFilter): Result<List<WikiSearchResult>> = withContext(Dispatchers.IO) {
@@ -543,25 +455,12 @@ class MippediaApiClient(context: Context) {
             }
 
             // Extract Infobox, Hero Image, and Social Media links
-            val infobox = extractInfobox(rawHtml)
+            val infobox = MippediaHtmlParsers.extractInfobox(rawHtml)
             val heroImage = infobox?.imageUrl ?: extractFirstImage(rawHtml)
             val socialLinks = extractSocialLinks(rawHtml)
 
-            // Fetch related pages (only genuine encyclopedia articles, excluding system/user pages)
-            val relatedList = mutableListOf<String>()
-            try {
-                val relUrl = "${lang.apiEndpoint}?action=query&list=backlinks&bltitle=$encodedTitle&blnamespace=0&bllimit=6&format=json"
-                val relJson = getJson(relUrl)
-                val blArray = relJson.optJSONObject("query")?.optJSONArray("backlinks")
-                if (blArray != null) {
-                    for (i in 0 until blArray.length()) {
-                        val t = blArray.getJSONObject(i).optString("title", "")
-                        if (t.isNotBlank() && !t.equals(title, ignoreCase = true) && !t.contains(":")) {
-                            relatedList.add(t)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
+            // Fetch real-time synchronized Related Articles (wgRelatedArticles -> morelike -> links/backlinks)
+            val relatedList = getRelatedArticles(resolvedTitle, lang).getOrDefault(emptyList())
 
             // Fetch category members if this is a Category page
             val categoryMembersList = mutableListOf<WikiSearchResult>()
@@ -759,21 +658,199 @@ class MippediaApiClient(context: Context) {
         }
     }
 
-    suspend fun getBacklinks(title: String, lang: WikiLanguage): Result<List<String>> = withContext(Dispatchers.IO) {
+    suspend fun getRelatedArticles(title: String, lang: WikiLanguage): Result<List<WikiRelatedArticle>> = withContext(Dispatchers.IO) {
         try {
-            val encodedTitle = URLEncoder.encode(title, "UTF-8")
-            val url = "${lang.apiEndpoint}?action=query&list=backlinks&bltitle=$encodedTitle&bllimit=20&format=json"
-            val json = getJson(url)
-            val list = mutableListOf<String>()
-            val backlinks = json.optJSONObject("query")?.optJSONArray("backlinks")
-            if (backlinks != null) {
-                for (i in 0 until backlinks.length()) {
-                    val item = backlinks.getJSONObject(i)
-                    val blTitle = item.optString("title", "")
-                    if (blTitle.isNotBlank()) list.add(blTitle)
+            val candidateTitles = mutableListOf<String>()
+
+            // 1. Primary: Read real-time RelatedArticles config from the live wiki page (wgRelatedArticles)
+            try {
+                val wikiSlug = URLEncoder.encode(title.replace(' ', '_'), "UTF-8").replace("+", "%20")
+                val pageUrl = "${lang.baseUrl}/wiki/$wikiSlug"
+                val req = Request.Builder().url(pageUrl).build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val pageHtml = resp.body?.string() ?: ""
+                        val extracted = MippediaHtmlParsers.extractRelatedTitlesFromPageHtml(pageHtml)
+                        extracted.forEach { t ->
+                            if (t.isNotBlank() && !t.equals(title, ignoreCase = true) && !candidateTitles.contains(t)) {
+                                candidateTitles.add(t)
+                            }
+                        }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w("MippediaApiClient", "wgRelatedArticles check warning: ${e.message}")
             }
-            Result.success(list)
+
+            // 2. Fallback: MediaWiki morelike search (same engine RelatedArticles extension uses when not manually curated)
+            val encodedTitle = URLEncoder.encode(title, "UTF-8")
+            if (candidateTitles.isEmpty()) {
+                try {
+                    val morelikeUrl = "${lang.apiEndpoint}?action=query&list=search&srsearch=morelike:$encodedTitle&srnamespace=0&srlimit=4&format=json"
+                    val mlJson = getJson(morelikeUrl, maxRetries = 1)
+                    val arr = mlJson.optJSONObject("query")?.optJSONArray("search")
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            val t = arr.getJSONObject(i).optString("title", "")
+                            if (t.isNotBlank() && !t.equals(title, ignoreCase = true) && !t.contains(":") && !candidateTitles.contains(t)) {
+                                candidateTitles.add(t)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 3. Secondary fallback: Backlinks in namespace 0
+            if (candidateTitles.isEmpty()) {
+                try {
+                    val blUrl = "${lang.apiEndpoint}?action=query&list=backlinks&bltitle=$encodedTitle&blnamespace=0&bllimit=6&format=json"
+                    val blJson = getJson(blUrl, maxRetries = 1)
+                    val blArr = blJson.optJSONObject("query")?.optJSONArray("backlinks")
+                    if (blArr != null) {
+                        for (i in 0 until blArr.length()) {
+                            val t = blArr.getJSONObject(i).optString("title", "")
+                            if (t.isNotBlank() && !t.equals(title, ignoreCase = true) && !t.contains(":") && !candidateTitles.contains(t)) {
+                                candidateTitles.add(t)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            if (candidateTitles.isEmpty()) {
+                return@withContext Result.success(emptyList())
+            }
+
+            // Enrich with thumbnail image, short description, and fallback 1-sentence extract
+            val limited = candidateTitles.take(5)
+            val titlesParam = limited.joinToString("|") { URLEncoder.encode(it, "UTF-8") }
+            val enrichUrl = "${lang.apiEndpoint}?action=query&titles=$titlesParam&prop=pageimages|description|extracts&pithumbsize=240&exintro=1&explaintext=1&exsentences=1&redirects=1&format=json"
+            val thumbMap = mutableMapOf<String, String>()
+            val descMap = mutableMapOf<String, String>()
+
+            try {
+                val enrichJson = getJson(enrichUrl, maxRetries = 2)
+                val pages = enrichJson.optJSONObject("query")?.optJSONObject("pages")
+                if (pages != null) {
+                    val keys = pages.keys()
+                    while (keys.hasNext()) {
+                        val pObj = pages.getJSONObject(keys.next())
+                        val pTitle = pObj.optString("title", "")
+                        val thumb = pObj.optJSONObject("thumbnail")?.optString("source", null)
+                        val shortDesc = pObj.optString("description", "").trim()
+                        val extract = pObj.optString("extract", "").trim()
+                        val finalDesc = shortDesc.ifBlank { extract }
+                        if (!thumb.isNullOrBlank()) thumbMap[pTitle.lowercase()] = thumb
+                        if (finalDesc.isNotBlank()) descMap[pTitle.lowercase()] = finalDesc
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("MippediaApiClient", "Related enrichment failed: ${e.message}")
+            }
+
+            val enriched = limited.map { t ->
+                val key = t.lowercase()
+                WikiRelatedArticle(
+                    title = t,
+                    description = descMap[key],
+                    thumbnailUrl = thumbMap[key]
+                )
+            }
+            Result.success(enriched)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getBacklinks(title: String, lang: WikiLanguage): Result<List<WikiRelatedArticle>> {
+        return getRelatedArticles(title, lang)
+    }
+
+    /**
+     * Fetches real-time list of articles/pages across Mippedia that use the specified file.
+     */
+    suspend fun getFileUsage(fileTitle: String): Result<List<WikiSearchResult>> = withContext(Dispatchers.IO) {
+        try {
+            val bareName = fileTitle
+                .replace("Berkas:", "", ignoreCase = true)
+                .replace("File:", "", ignoreCase = true)
+                .replace('_', ' ')
+                .trim()
+            if (bareName.isBlank()) return@withContext Result.success(emptyList())
+
+            val results = linkedMapOf<String, WikiSearchResult>()
+
+            // 1. Query Commons globalusage (returns usage across id.mippedia.org & en.mippedia.org)
+            try {
+                val encCommons = URLEncoder.encode("File:$bareName", "UTF-8")
+                val guUrl = "${WikiLanguage.COMMONS.apiEndpoint}?action=query&titles=$encCommons&prop=globalusage&gulimit=30&format=json"
+                val guJson = getJson(guUrl, maxRetries = 2)
+                val pages = guJson.optJSONObject("query")?.optJSONObject("pages")
+                if (pages != null) {
+                    val keys = pages.keys()
+                    while (keys.hasNext()) {
+                        val pObj = pages.getJSONObject(keys.next())
+                        val guArr = pObj.optJSONArray("globalusage")
+                        if (guArr != null) {
+                            for (i in 0 until guArr.length()) {
+                                val item = guArr.getJSONObject(i)
+                                val rawTitle = item.optString("title", "").replace('_', ' ').trim()
+                                val wiki = item.optString("wiki", "id.mippedia.org")
+                                if (rawTitle.isNotBlank()) {
+                                    val key = "${wiki.lowercase()}::$rawTitle"
+                                    val wikiLabel = when {
+                                        wiki.startsWith("en.") -> "Mippedia English"
+                                        wiki.startsWith("commons.") -> "Mippedia Commons"
+                                        else -> "Mippedia Indonesia"
+                                    }
+                                    results[key] = WikiSearchResult(
+                                        pageId = 0L,
+                                        title = rawTitle,
+                                        snippet = "Digunakan di $wikiLabel ($wiki)",
+                                        ns = if (rawTitle.contains(":")) 4 else 0,
+                                        shortDescription = wiki
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("MippediaApiClient", "globalusage query failed: ${e.message}")
+            }
+
+            // 2. Also query Indonesian Mippedia local imageusage directly for guaranteed live sync
+            try {
+                val encId = URLEncoder.encode("Berkas:$bareName", "UTF-8")
+                val iuUrl = "${WikiLanguage.INDONESIAN.apiEndpoint}?action=query&list=imageusage&iutitle=$encId&iulimit=30&format=json"
+                val iuJson = getJson(iuUrl, maxRetries = 2)
+                val iuArr = iuJson.optJSONObject("query")?.optJSONArray("imageusage")
+                if (iuArr != null) {
+                    for (i in 0 until iuArr.length()) {
+                        val item = iuArr.getJSONObject(i)
+                        val t = item.optString("title", "").replace('_', ' ').trim()
+                        val ns = item.optInt("ns", 0)
+                        if (t.isNotBlank()) {
+                            val key = "id.mippedia.org::$t"
+                            if (!results.containsKey(key)) {
+                                results[key] = WikiSearchResult(
+                                    pageId = item.optLong("pageid", 0L),
+                                    title = t,
+                                    snippet = "Digunakan di Mippedia Indonesia",
+                                    ns = ns,
+                                    shortDescription = "id.mippedia.org"
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("MippediaApiClient", "imageusage query failed: ${e.message}")
+            }
+
+            // Prioritize mainspace articles (ns == 0) before project/archive pages
+            val sorted = results.values.sortedWith(compareBy<WikiSearchResult> { it.ns != 0 }.thenBy { it.title })
+            Result.success(sorted)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -1390,56 +1467,7 @@ class MippediaApiClient(context: Context) {
         return null
     }
 
-    private fun extractInfobox(html: String): WikiInfobox? {
-        try {
-            val pattern = Pattern.compile("<table[^>]*class=\"[^\"]*infobox[^\"]*\"[^>]*>(.*?)</table>", Pattern.DOTALL)
-            val matcher = pattern.matcher(html)
-            if (!matcher.find()) return null
-
-            val tableHtml = matcher.group(1) ?: return null
-
-            var title = ""
-            val titleMatcher = Pattern.compile("<th[^>]*class=\"[^\"]*infobox-above[^\"]*\"[^>]*>(.*?)</th>", Pattern.DOTALL).matcher(tableHtml)
-            if (titleMatcher.find()) {
-                title = titleMatcher.group(1).replace(Regex("<[^>]*>"), "").trim()
-            }
-
-            var imgUrl: String? = null
-            val imgMatcher = Pattern.compile("<img[^>]*src=\"([^\"]+)\"", Pattern.DOTALL).matcher(tableHtml)
-            while (imgMatcher.find()) {
-                val src = imgMatcher.group(1) ?: continue
-                if (!src.contains("icon", ignoreCase = true) && !src.contains("svg", ignoreCase = true)) {
-                    imgUrl = when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "https://commons.mippedia.org$src"
-                        else -> src
-                    }
-                    break
-                }
-            }
-
-            val items = mutableListOf<Pair<String, String>>()
-            val rowPattern = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.DOTALL)
-            val rowMatcher = rowPattern.matcher(tableHtml)
-            while (rowMatcher.find()) {
-                val rowHtml = rowMatcher.group(1)
-                val thMatcher = Pattern.compile("<th[^>]*>(.*?)</th>", Pattern.DOTALL).matcher(rowHtml)
-                val tdMatcher = Pattern.compile("<td[^>]*>(.*?)</td>", Pattern.DOTALL).matcher(rowHtml)
-                if (thMatcher.find() && tdMatcher.find()) {
-                    val key = thMatcher.group(1).replace(Regex("<[^>]*>"), "").trim()
-                    val value = tdMatcher.group(1).replace(Regex("<[^>]*>"), "").trim()
-                    if (key.isNotBlank() && value.isNotBlank() && key != title) {
-                        items.add(Pair(key, value))
-                    }
-                }
-            }
-
-            if (items.isEmpty() && imgUrl == null && title.isBlank()) return null
-            return WikiInfobox(title = title, imageUrl = imgUrl, items = items)
-        } catch (_: Exception) {
-            return null
-        }
-    }
+    private fun extractInfobox(html: String): WikiInfobox? = MippediaHtmlParsers.extractInfobox(html)
 
     private fun extractSocialLinks(html: String): List<Pair<String, String>> {
         val list = mutableListOf<Pair<String, String>>()

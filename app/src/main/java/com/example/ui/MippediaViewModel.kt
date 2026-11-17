@@ -36,6 +36,7 @@ data class UiState(
     val recentChanges: List<WikiRecentChange> = emptyList(),
     val monthlyArticle: MonthlyFeature? = null,
     val monthlyImage: MonthlyFeature? = null,
+    val onThisDay: OnThisDayData? = null,
     val commonsSpotlight: List<WikiMediaItem> = emptyList(),
 
     // Current Active Article
@@ -43,7 +44,7 @@ data class UiState(
     val isBookmarked: Boolean = false,
     val showTocSheet: Boolean = false,
     val showRelatedSheet: Boolean = false,
-    val relatedArticles: List<String> = emptyList(),
+    val relatedArticles: List<WikiRelatedArticle> = emptyList(),
     val isRelatedLoading: Boolean = false,
 
     // Wikitext Editor
@@ -58,6 +59,8 @@ data class UiState(
     // Media Viewer (Berkas:)
     val activeMedia: WikiMediaItem? = null,
     val isMediaLoading: Boolean = false,
+    val activeMediaUsage: List<WikiSearchResult> = emptyList(),
+    val isMediaUsageLoading: Boolean = false,
 
     // Search
     val searchQuery: String = "",
@@ -188,14 +191,15 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
             _uiState.update { it.copy(isLoading = true, error = null) }
             val currentLang = _uiState.value.currentLanguage
             val rcRes = repository.apiClient.getRecentChanges(currentLang)
-            val monthlyRes = repository.apiClient.getMonthlyFeatures(currentLang)
-            val (mArticle, mImage) = monthlyRes.getOrDefault(Pair(null, null))
+            val highlightsRes = repository.apiClient.getMainPageHighlights(currentLang)
+            val highlights = highlightsRes.getOrNull()
 
             _uiState.update {
                 it.copy(
                     recentChanges = rcRes.getOrDefault(emptyList()),
-                    monthlyArticle = mArticle,
-                    monthlyImage = mImage,
+                    monthlyArticle = highlights?.monthlyArticle,
+                    monthlyImage = highlights?.monthlyImage,
+                    onThisDay = highlights?.onThisDay,
                     isLoading = false
                 )
             }
@@ -301,9 +305,10 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
         val article = _uiState.value.activeArticle ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(showRelatedSheet = true, isRelatedLoading = true, relatedArticles = article.relatedArticles) }
-            val res = repository.apiClient.getBacklinks(article.title, _uiState.value.currentLanguage)
+            val res = repository.apiClient.getRelatedArticles(article.title, _uiState.value.currentLanguage)
             _uiState.update {
-                val combined = (article.relatedArticles + res.getOrDefault(emptyList())).distinct()
+                val combined = (article.relatedArticles + res.getOrDefault(emptyList()))
+                    .distinctBy { item -> item.title.lowercase() }
                 it.copy(
                     isRelatedLoading = false,
                     relatedArticles = combined
@@ -322,7 +327,8 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
 
     fun openMediaDetail(titleOrItem: Any) {
         if (titleOrItem is WikiMediaItem) {
-            _uiState.update { it.copy(activeMedia = titleOrItem) }
+            _uiState.update { it.copy(activeMedia = titleOrItem, activeMediaUsage = emptyList()) }
+            loadMediaUsage(titleOrItem.title)
             return
         }
         val rawInput = (titleOrItem as? String)?.trim() ?: return
@@ -362,12 +368,24 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isMediaLoading = true) }
+            _uiState.update { it.copy(isMediaLoading = true, activeMediaUsage = emptyList()) }
             val res = repository.apiClient.getImageInfo(queryTitle)
             if (res.isSuccess && res.getOrNull() != null) {
-                _uiState.update { it.copy(activeMedia = res.getOrNull(), isMediaLoading = false) }
+                val resolved = res.getOrNull()!!
+                _uiState.update { it.copy(activeMedia = resolved, isMediaLoading = false) }
+                loadMediaUsage(resolved.title)
             } else if (directUrl != null) {
-                // Graceful fallback: render the direct URL in MediaViewerSheet so user can still view and download
+                val lowerUrl = directUrl.lowercase().substringBefore('?')
+                val guessedMime = when {
+                    lowerUrl.endsWith(".svg") -> "image/svg+xml"
+                    lowerUrl.endsWith(".ogg") || lowerUrl.endsWith(".oga") -> "audio/ogg"
+                    lowerUrl.endsWith(".mp3") -> "audio/mpeg"
+                    lowerUrl.endsWith(".wav") -> "audio/wav"
+                    lowerUrl.endsWith(".mp4") -> "video/mp4"
+                    lowerUrl.endsWith(".webm") -> "video/webm"
+                    lowerUrl.endsWith(".ogv") -> "video/ogg"
+                    else -> "image/jpeg"
+                }
                 val fallbackMedia = WikiMediaItem(
                     title = queryTitle.replace("File:", "").replace("Berkas:", "").replace("_", " "),
                     url = directUrl,
@@ -375,12 +393,13 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
                     width = 0,
                     height = 0,
                     sizeBytes = 0,
-                    mime = if (directUrl.endsWith(".svg", ignoreCase = true)) "image/svg+xml" else "image/jpeg",
+                    mime = guessedMime,
                     user = "Mippedia Community",
                     timestamp = "",
                     descriptionUrl = directUrl
                 )
                 _uiState.update { it.copy(activeMedia = fallbackMedia, isMediaLoading = false) }
+                loadMediaUsage(queryTitle)
             } else {
                 _uiState.update { it.copy(activeMedia = null, isMediaLoading = false) }
                 showToast("Informasi berkas tidak dapat ditemukan di Commons")
@@ -388,8 +407,34 @@ class MippediaViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun loadMediaUsage(fileTitle: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isMediaUsageLoading = true) }
+            val usageRes = repository.apiClient.getFileUsage(fileTitle)
+            _uiState.update {
+                it.copy(
+                    isMediaUsageLoading = false,
+                    activeMediaUsage = usageRes.getOrDefault(emptyList())
+                )
+            }
+        }
+    }
+
+    fun openArticleFromMediaUsage(title: String, wikiHost: String? = null) {
+        _uiState.update { it.copy(activeMedia = null, activeMediaUsage = emptyList(), isMediaUsageLoading = false) }
+        val targetLang = when {
+            wikiHost?.startsWith("en.", ignoreCase = true) == true -> WikiLanguage.ENGLISH
+            wikiHost?.startsWith("id.", ignoreCase = true) == true -> WikiLanguage.INDONESIAN
+            else -> _uiState.value.currentLanguage
+        }
+        if (targetLang != _uiState.value.currentLanguage) {
+            repository.setLanguage(targetLang)
+        }
+        openArticle(title)
+    }
+
     fun closeMediaDetail() {
-        _uiState.update { it.copy(activeMedia = null) }
+        _uiState.update { it.copy(activeMedia = null, activeMediaUsage = emptyList(), isMediaUsageLoading = false) }
     }
 
     fun updateSearchQuery(query: String) {

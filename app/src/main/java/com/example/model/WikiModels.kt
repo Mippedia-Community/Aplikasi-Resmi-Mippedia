@@ -14,6 +14,53 @@ enum class WikiLanguage(
         get() = "$baseUrl/api.php"
 }
 
+data class WikiRelatedArticle(
+    val title: String,
+    val description: String? = null,
+    val thumbnailUrl: String? = null
+)
+
+data class OnThisDayLink(
+    val label: String,
+    val targetTitle: String
+)
+
+data class OnThisDayEvent(
+    val year: String,
+    val text: String,
+    val links: List<OnThisDayLink> = emptyList()
+)
+
+data class OnThisDayCategory(
+    val categoryTitle: String,
+    val events: List<OnThisDayEvent> = emptyList(),
+    val yesterdayTitle: String? = null,
+    val tomorrowTitle: String? = null
+)
+
+data class OnThisDayData(
+    val dateLabel: String = "",
+    val categories: List<OnThisDayCategory> = emptyList()
+)
+
+data class SportsSeasonStatCard(
+    val headerTitle: String,
+    val metrics: List<Pair<String, String>> = emptyList(),
+    val details: List<Pair<String, String>> = emptyList()
+)
+
+data class CareerCell(
+    val text: String,
+    val targetTitle: String? = null,
+    val isRedlink: Boolean = false
+)
+
+data class CareerTableSection(
+    val title: String,
+    val headers: List<String> = emptyList(),
+    val rows: List<List<CareerCell>> = emptyList()
+)
+
 data class WikiArticle(
     val title: String,
     val displayTitle: String = title,
@@ -29,7 +76,7 @@ data class WikiArticle(
     val socialLinks: List<Pair<String, String>> = emptyList(),
     val categories: List<String> = emptyList(),
     val images: List<String> = emptyList(),
-    val relatedArticles: List<String> = emptyList(),
+    val relatedArticles: List<WikiRelatedArticle> = emptyList(),
     val categoryMembers: List<WikiSearchResult> = emptyList(),
     val redirectedFrom: String? = null,
     val revId: Long = 0,
@@ -69,14 +116,17 @@ data class WikiSection(
 data class WikiInfobox(
     val title: String,
     val imageUrl: String? = null,
-    val items: List<Pair<String, String>> = emptyList()
+    val items: List<Pair<String, String>> = emptyList(),
+    val seasonStats: List<SportsSeasonStatCard> = emptyList(),
+    val careerSections: List<CareerTableSection> = emptyList()
 )
 
 data class MonthlyFeature(
     val title: String,
     val summary: String,
     val imageUrl: String? = null,
-    val targetArticleTitle: String? = null
+    val targetArticleTitle: String? = null,
+    val attribution: String? = null
 )
 
 data class WikiMediaItem(
@@ -90,7 +140,31 @@ data class WikiMediaItem(
     val user: String = "",
     val timestamp: String = "",
     val descriptionUrl: String = ""
-)
+) {
+    val isAudio: Boolean
+        get() {
+            val lowerUrl = url.lowercase().substringBefore('?')
+            val lowerTitle = title.lowercase()
+            return mime.startsWith("audio/", ignoreCase = true) ||
+                mime.equals("application/ogg", ignoreCase = true) ||
+                listOf(".ogg", ".oga", ".mp3", ".wav", ".flac", ".m4a", ".opus", ".aac").any {
+                    lowerUrl.endsWith(it) || lowerTitle.endsWith(it)
+                }
+        }
+
+    val isVideo: Boolean
+        get() {
+            val lowerUrl = url.lowercase().substringBefore('?')
+            val lowerTitle = title.lowercase()
+            return mime.startsWith("video/", ignoreCase = true) ||
+                listOf(".mp4", ".webm", ".ogv", ".mov", ".mkv").any {
+                    lowerUrl.endsWith(it) || lowerTitle.endsWith(it)
+                }
+        }
+
+    val isImage: Boolean
+        get() = !isAudio && !isVideo
+}
 
 data class WikiSearchResult(
     val pageId: Long,
@@ -161,4 +235,3 @@ data class UserContributionItem(
     val isMinor: Boolean = false,
     val isNew: Boolean = false
 )
-

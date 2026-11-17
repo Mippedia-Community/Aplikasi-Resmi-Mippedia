@@ -13,13 +13,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.HistoryEdu
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -30,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.model.MonthlyFeature
+import com.example.model.OnThisDayData
 import com.example.model.WikiLanguage
 import com.example.model.WikiMediaItem
 import com.example.model.WikiRecentChange
@@ -44,9 +47,13 @@ fun ExploreScreen(
     recentChanges: List<WikiRecentChange>,
     monthlyArticle: MonthlyFeature?,
     monthlyImage: MonthlyFeature?,
+    onThisDay: OnThisDayData? = null,
     commonsSpotlight: List<WikiMediaItem>,
     onArticleClick: (String) -> Unit,
     onMediaClick: (WikiMediaItem) -> Unit,
+    onMonthlyImageClick: (MonthlyFeature) -> Unit = { mf ->
+        onArticleClick(mf.targetArticleTitle ?: mf.imageUrl ?: mf.title)
+    },
     onRandomClick: () -> Unit,
     onCategoryClick: (String) -> Unit,
     onRefresh: () -> Unit,
@@ -283,7 +290,7 @@ fun ExploreScreen(
             }
         }
 
-        // 4. Gambar Bulanan (Featured Monthly Image - only shown when available!)
+        // 4. Gambar Bulanan (Featured Monthly Image - synced in real time!)
         if (monthlyImage != null) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -305,10 +312,7 @@ fun ExploreScreen(
                     }
 
                     Card(
-                        onClick = {
-                            val target = monthlyImage.targetArticleTitle ?: monthlyImage.title
-                            onArticleClick(target)
-                        },
+                        onClick = { onMonthlyImageClick(monthlyImage) },
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -327,12 +331,29 @@ fun ExploreScreen(
                                 )
                             }
                             Column(modifier = Modifier.padding(14.dp)) {
+                                if (monthlyImage.title.isNotBlank()) {
+                                    Text(
+                                        text = monthlyImage.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                }
                                 Text(
                                     text = monthlyImage.summary,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     lineHeight = 18.sp
                                 )
+                                if (!monthlyImage.attribution.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = monthlyImage.attribution,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -356,6 +377,179 @@ fun ExploreScreen(
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
                                     )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4b. Hari Ini Dalam Sejarah (Real-time synchronized from Halaman_Utama)
+        if (onThisDay != null && onThisDay.categories.isNotEmpty()) {
+            item {
+                var selectedCategoryIdx by remember(onThisDay) { mutableIntStateOf(0) }
+                val safeIdx = selectedCategoryIdx.coerceIn(0, onThisDay.categories.lastIndex)
+                val activeCat = onThisDay.categories[safeIdx]
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.HistoryEdu,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Hari Ini Dalam Sejarah",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                        ) {
+                            Text(
+                                text = "Sinkron Langsung",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    // Interactive Category Filter Chips
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(onThisDay.categories.size) { index ->
+                            val cat = onThisDay.categories[index]
+                            FilterChip(
+                                selected = index == safeIdx,
+                                onClick = { selectedCategoryIdx = index },
+                                label = {
+                                    Text(
+                                        text = cat.categoryTitle,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (index == safeIdx) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
+
+                    // Active Category Events Card
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = activeCat.categoryTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "${activeCat.events.size} peristiwa",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
+
+                            activeCat.events.forEachIndexed { idx, ev ->
+                                if (idx > 0) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    if (ev.year.isNotBlank()) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        ) {
+                                            Text(
+                                                text = ev.year,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = ev.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            lineHeight = 19.sp
+                                        )
+                                        if (ev.links.isNotEmpty()) {
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                items(ev.links) { link ->
+                                                    SuggestionChip(
+                                                        onClick = { onArticleClick(link.targetTitle) },
+                                                        label = { Text(link.label, fontSize = 11.sp) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!activeCat.yesterdayTitle.isNullOrBlank() || !activeCat.tomorrowTitle.isNullOrBlank()) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (!activeCat.yesterdayTitle.isNullOrBlank()) {
+                                        TextButton(
+                                            onClick = { onArticleClick(activeCat.yesterdayTitle) },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("← Kemarin", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    } else {
+                                        Spacer(modifier = Modifier.width(1.dp))
+                                    }
+                                    if (!activeCat.tomorrowTitle.isNullOrBlank()) {
+                                        TextButton(
+                                            onClick = { onArticleClick(activeCat.tomorrowTitle) },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Besok →", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -433,14 +627,55 @@ fun ExploreScreen(
                                 modifier = Modifier.width(140.dp)
                             ) {
                                 Column {
-                                    AsyncImage(
-                                        model = media.url,
-                                        contentDescription = media.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(100.dp)
-                                    )
+                                    if (media.isAudio || media.isVideo) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(100.dp)
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        colors = if (media.isAudio) {
+                                                            listOf(Color(0xFF0F766E), Color(0xFF0284C7))
+                                                        } else {
+                                                            listOf(Color(0xFF1E293B), Color(0xFF4338CA))
+                                                        }
+                                                    )
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (media.isAudio) Icons.Default.GraphicEq else Icons.Default.PlayCircleOutline,
+                                                contentDescription = media.title,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(38.dp)
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color.Black.copy(alpha = 0.45f),
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (media.isAudio) "AUDIO" else "VIDEO",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        AsyncImage(
+                                            model = media.url,
+                                            contentDescription = media.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(100.dp)
+                                        )
+                                    }
                                     Text(
                                         text = media.title.removePrefix("Berkas:").removePrefix("File:"),
                                         style = MaterialTheme.typography.labelSmall,

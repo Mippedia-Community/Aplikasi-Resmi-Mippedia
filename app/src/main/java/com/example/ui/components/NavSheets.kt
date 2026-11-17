@@ -12,10 +12,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.model.WikiNotification
+import com.example.model.WikiRelatedArticle
 import com.example.model.WikiSection
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -107,7 +112,7 @@ fun TableOfContentsSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RelatedPagesSheet(
-    relatedPages: List<String>,
+    relatedPages: List<WikiRelatedArticle>,
     isLoading: Boolean,
     onPageClick: (String) -> Unit,
     onClose: () -> Unit
@@ -127,7 +132,7 @@ fun RelatedPagesSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Halaman Terkait (Tautan Balik)",
+                    text = "Halaman Terkait",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -138,7 +143,7 @@ fun RelatedPagesSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (isLoading) {
+            if (isLoading && relatedPages.isEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -158,7 +163,7 @@ fun RelatedPagesSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Belum ada halaman lain yang menautkan ke artikel ini.",
+                        text = "Belum ada halaman terkait untuk artikel ini.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -167,41 +172,71 @@ fun RelatedPagesSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 24.dp)
+                        .padding(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(relatedPages) { page ->
                         Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
                                 .clickable {
-                                    onPageClick(page)
+                                    onPageClick(page.title)
                                     onClose()
                                 }
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Article,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
+                                if (!page.thumbnailUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = page.thumbnailUrl,
+                                        contentDescription = page.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(56.dp)
+                                            .clip(RoundedCornerShape(10.dp))
                                     )
+                                } else {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                        modifier = Modifier.size(56.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Article,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = page,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
+                                        text = page.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
                                     )
+                                    if (!page.description.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = page.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                                 Icon(
                                     imageVector = Icons.Default.ArrowForwardIos,

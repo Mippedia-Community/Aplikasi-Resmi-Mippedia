@@ -74,6 +74,8 @@ fun ArticleRenderer(
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
     var showFontDialog by remember { mutableStateOf(false) }
+    var activeAudioUrl by remember(article.title) { mutableStateOf<String?>(null) }
+    var activeAudioTitle by remember(article.title) { mutableStateOf("Audio Mippedia") }
 
     val isCategory = article.title.startsWith("Kategori:", ignoreCase = true) || article.title.startsWith("Category:", ignoreCase = true)
     val isProtectedOrCategory = article.isProtected || isCategory
@@ -331,13 +333,19 @@ fun ArticleRenderer(
         }
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = if (activeAudioUrl != null) 110.dp else 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         // 1. Hero Image at the VERY TOP (Collapses immediately on error so no blank box appears)
         if (!article.heroImageUrl.isNullOrBlank() && !isHeroImageError) {
             item {
@@ -620,13 +628,29 @@ fun ArticleRenderer(
             }
         }
 
-        // 5. Native Infobox Card (Clean card with structured items)
-        if (article.infobox != null && article.infobox.items.isNotEmpty()) {
-            item {
-                InfoboxCard(
-                    infobox = article.infobox,
-                    onImageClick = onImageClick
-                )
+        // 5. Native Infobox Card + Sports/Esports Stats & Career Cards
+        if (article.infobox != null) {
+            if (article.infobox.items.isNotEmpty() || article.infobox.title.isNotBlank()) {
+                item {
+                    InfoboxCard(
+                        infobox = article.infobox,
+                        onImageClick = onImageClick
+                    )
+                }
+            }
+            if (article.infobox.seasonStats.isNotEmpty()) {
+                item {
+                    SportsSeasonStatsDeck(seasonStats = article.infobox.seasonStats)
+                }
+            }
+            if (article.infobox.careerSections.isNotEmpty()) {
+                item {
+                    CareerAndAchievementsDeck(
+                        sections = article.infobox.careerSections,
+                        onArticleLinkClick = onArticleLinkClick,
+                        onRedlinkClick = onRedlinkClick
+                    )
+                }
             }
         }
 
@@ -659,7 +683,43 @@ fun ArticleRenderer(
                             webViewClient = object : WebViewClient() {
                                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                     val url = request?.url?.toString() ?: return false
+                                    val lowerUrl = url.lowercase().substringBefore('?')
+                                    val audioExts = listOf(".ogg", ".oga", ".mp3", ".wav", ".opus", ".m4a", ".flac")
+                                    val videoExts = listOf(".mp4", ".webm", ".ogv", ".mov")
+
                                     when {
+                                        url.startsWith("mippedia-audio://") -> {
+                                            val encoded = url.removePrefix("mippedia-audio://")
+                                            val target = try { java.net.URLDecoder.decode(encoded, "UTF-8") } catch (_: Exception) { encoded }
+                                            val normalized = when {
+                                                target.startsWith("//") -> "https:$target"
+                                                target.startsWith("/") -> "https://commons.mippedia.org$target"
+                                                else -> target
+                                            }
+                                            activeAudioUrl = normalized
+                                            activeAudioTitle = com.example.network.MippediaHtmlParsers.deriveFilenameFromUrl(normalized) ?: "Audio Mippedia"
+                                            return true
+                                        }
+                                        url.startsWith("mippedia-video://") -> {
+                                            val encoded = url.removePrefix("mippedia-video://")
+                                            val target = try { java.net.URLDecoder.decode(encoded, "UTF-8") } catch (_: Exception) { encoded }
+                                            val normalized = when {
+                                                target.startsWith("//") -> "https:$target"
+                                                target.startsWith("/") -> "https://commons.mippedia.org$target"
+                                                else -> target
+                                            }
+                                            onImageClick(normalized)
+                                            return true
+                                        }
+                                        audioExts.any { lowerUrl.endsWith(it) } -> {
+                                            activeAudioUrl = url
+                                            activeAudioTitle = com.example.network.MippediaHtmlParsers.deriveFilenameFromUrl(url) ?: "Audio Mippedia"
+                                            return true
+                                        }
+                                        videoExts.any { lowerUrl.endsWith(it) } -> {
+                                            onImageClick(url)
+                                            return true
+                                        }
                                         url.contains("redlink=1") || (url.contains("action=edit") && url.contains("title=")) -> {
                                             val uri = Uri.parse(url)
                                             val targetTitle = uri.getQueryParameter("title")
@@ -852,39 +912,25 @@ fun ArticleRenderer(
             }
         }
 
-        // 8. Related Articles Extension
+        // 8. Related Articles Extension (Synchronized cards with Thumbnail & Short Description)
         if (article.relatedArticles.isNotEmpty()) {
             item {
-                Column(modifier = Modifier.padding(top = 8.dp)) {
+                Column(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
-                        text = "Halaman Terkait",
-                        style = MaterialTheme.typography.titleSmall,
+                        text = "HALAMAN TERKAIT",
+                        style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
+                        letterSpacing = 0.8.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    article.relatedArticles.take(4).forEach { relTitle ->
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            onClick = { onArticleLinkClick(relTitle) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 3.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = relTitle,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Icon(Icons.Default.ArrowForwardIos, contentDescription = null, modifier = Modifier.size(12.dp))
-                            }
-                        }
+                    article.relatedArticles.take(5).forEach { relItem ->
+                        RelatedArticleRichCard(
+                            item = relItem,
+                            onClick = { onArticleLinkClick(relItem.title) }
+                        )
                     }
                 }
             }
@@ -914,6 +960,20 @@ fun ArticleRenderer(
                 }
             }
         }
+    }
+
+    // Floating Inline Audio Mini-Player when user taps speaker / simak / audio inside article
+    if (activeAudioUrl != null) {
+        ArticleAudioMiniPlayer(
+            audioUrl = activeAudioUrl!!,
+            audioTitle = activeAudioTitle,
+            onOpenInCommons = { onImageClick(activeAudioUrl!!) },
+            onClose = { activeAudioUrl = null },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(14.dp)
+        )
+    }
     }
 }
 
@@ -1009,7 +1069,26 @@ private fun generateStyledArticleHtml(
         .replace(Regex("<div[^>]*role=[\"']note[\"'][^>]*>.*?</div>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)), "")
         .replace(Regex("<div[^>]*class=[\"'][^\"']*shortdescription[^\"']*[\"'][^>]*>.*?</div>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)), "")
 
-    // Hide infobox in HTML because it is already displayed in native InfoboxCard above!
+    // 4. Rewrite MediaWiki Phonos speaker buttons (<span class="...ext-phonos-PhonosButton..."><a href="...ogg">...simak...</a></span>) into clean interactive audio pills
+    cleanHtml = rewritePhonosButtonsToAudioPills(cleanHtml)
+
+    // Also handle any <audio> elements
+    cleanHtml = Regex("<audio[^>]*>.*?(?:\\bsrc=[\"']([^\"']+)[\"']).*?</audio>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        .replace(cleanHtml) { m ->
+            val src = com.example.network.MippediaHtmlParsers.unescapeHtmlEntities(m.groupValues[1])
+            val enc = java.net.URLEncoder.encode(src, "UTF-8")
+            "<a class=\"mippedia-audio-pill\" href=\"mippedia-audio://$enc\">🔊 Putar Audio</a>"
+        }
+
+    // Also handle any <video> elements
+    cleanHtml = Regex("<video[^>]*>.*?(?:\\bsrc=[\"']([^\"']+)[\"']).*?</video>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        .replace(cleanHtml) { m ->
+            val src = com.example.network.MippediaHtmlParsers.unescapeHtmlEntities(m.groupValues[1])
+            val enc = java.net.URLEncoder.encode(src, "UTF-8")
+            "<div class=\"mippedia-media-wrap\"><a class=\"mippedia-video-pill\" href=\"mippedia-video://$enc\">🎬 Putar Video Media</a></div>"
+        }
+
+    // Hide infobox in HTML because it is already displayed in native InfoboxCard & Sports/Career decks above!
     return """
         <!DOCTYPE html>
         <html>
@@ -1030,6 +1109,38 @@ private fun generateStyledArticleHtml(
                     color: $linkColor;
                     text-decoration: none;
                     font-weight: 500;
+                }
+                .mippedia-audio-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 2px 10px;
+                    margin: 0 3px;
+                    border-radius: 999px;
+                    background-color: rgba(2, 132, 199, 0.14);
+                    color: $linkColor;
+                    font-size: 0.85em;
+                    font-weight: 700;
+                    border: 1px solid rgba(2, 132, 199, 0.35);
+                    vertical-align: middle;
+                }
+                .mippedia-media-wrap {
+                    margin: 10px 0;
+                }
+                .mippedia-video-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 10px 16px;
+                    border-radius: 12px;
+                    background-color: rgba(79, 70, 229, 0.14);
+                    color: $linkColor;
+                    font-size: 0.92em;
+                    font-weight: 700;
+                    border: 1px solid rgba(79, 70, 229, 0.35);
+                }
+                .ext-phonos-attribution {
+                    display: none !important;
                 }
                 table.infobox {
                     display: none !important;
@@ -1170,6 +1281,40 @@ private fun generateStyledArticleHtml(
         </body>
         </html>
     """.trimIndent()
+}
+
+private fun rewritePhonosButtonsToAudioPills(html: String): String {
+    val marker = Regex("<span[^>]*class=[\"'][^\"']*ext-phonos-PhonosButton[^\"']*[\"'][^>]*>", RegexOption.IGNORE_CASE)
+    val sb = StringBuilder()
+    var pos = 0
+    while (pos < html.length) {
+        val m = marker.find(html, pos)
+        if (m == null) {
+            sb.append(html.substring(pos))
+            break
+        }
+        val spanStart = m.range.first
+        sb.append(html, pos, spanStart)
+        val balanced = com.example.network.MippediaHtmlParsers.extractBalancedElement(html, spanStart, "span")
+        if (balanced == null) {
+            sb.append(html, spanStart, m.range.last + 1)
+            pos = m.range.last + 1
+            continue
+        }
+        val spanBlock = balanced.first
+        pos = balanced.second
+
+        val aMatch = Regex("<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)).find(spanBlock)
+        if (aMatch != null) {
+            val rawUrl = com.example.network.MippediaHtmlParsers.unescapeHtmlEntities(aMatch.groupValues[1])
+            val label = com.example.network.MippediaHtmlParsers.stripHtml(aMatch.groupValues[2]).ifBlank { "simak" }
+            val enc = java.net.URLEncoder.encode(rawUrl, "UTF-8")
+            sb.append("<a class=\"mippedia-audio-pill\" href=\"mippedia-audio://$enc\">🔊 $label</a>")
+        } else {
+            sb.append(spanBlock)
+        }
+    }
+    return sb.toString()
 }
 
 private fun formatIsoTimestamp(rawTimestamp: String): String {

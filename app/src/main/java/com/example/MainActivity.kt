@@ -280,6 +280,11 @@ fun MippediaMainApp(viewModel: MippediaViewModel = viewModel()) {
             } else if (uiState.activeMedia != null) {
                 MediaViewerScreen(
                     media = uiState.activeMedia!!,
+                    mediaUsage = uiState.activeMediaUsage,
+                    isUsageLoading = uiState.isMediaUsageLoading,
+                    onArticleClick = { title, wikiHost ->
+                        viewModel.openArticleFromMediaUsage(title, wikiHost)
+                    },
                     onClose = { viewModel.closeMediaDetail() }
                 )
             } else if (uiState.showSettingsScreen) {
@@ -346,9 +351,14 @@ fun MippediaMainApp(viewModel: MippediaViewModel = viewModel()) {
                             recentChanges = uiState.recentChanges,
                             monthlyArticle = uiState.monthlyArticle,
                             monthlyImage = uiState.monthlyImage,
+                            onThisDay = uiState.onThisDay,
                             commonsSpotlight = uiState.commonsSpotlight,
                             onArticleClick = { viewModel.openArticle(it) },
                             onMediaClick = { viewModel.openMediaDetail(it) },
+                            onMonthlyImageClick = { mf ->
+                                val target = mf.targetArticleTitle ?: mf.imageUrl ?: mf.title
+                                viewModel.openMediaDetail(target)
+                            },
                             onRandomClick = { viewModel.openRandomArticle() },
                             onCategoryClick = { viewModel.openArticle(it) },
                             onRefresh = { viewModel.loadExploreData() },
